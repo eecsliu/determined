@@ -1,6 +1,7 @@
 package provisioner
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -51,6 +52,7 @@ func newScaleDecider(
 // 2. last provision < last update + the maximum agent starting period.
 // 3. last provision < last update + the maximum agent idle period.
 func (s *scaleDecider) needScale() bool {
+	fmt.Println("INSIDE needScale()")
 	lastUpdated := s.lastProviderUpdated
 	if lastUpdated.Before(s.lastSchedulerUpdated) {
 		lastUpdated = s.lastSchedulerUpdated
@@ -67,6 +69,7 @@ func (s *scaleDecider) needScale() bool {
 }
 
 func (s *scaleDecider) updateSchedulerSnapshot(snapshot *scheduler.ViewSnapshot) {
+	fmt.Println("INSIDE updateSchedulerSnapshot()")
 	s.agentSnapshot = make(map[string]*scheduler.AgentSummary)
 	for _, agent := range snapshot.Agents {
 		s.agentSnapshot[agent.Name] = agent
@@ -76,6 +79,7 @@ func (s *scaleDecider) updateSchedulerSnapshot(snapshot *scheduler.ViewSnapshot)
 }
 
 func (s *scaleDecider) updateInstanceSnapshot(instances []*Instance) bool {
+	fmt.Println("INSIDE updateInstanceSnapshot()")
 	updated := func() {
 		s.instanceSnapshot = make(map[string]*Instance)
 		for _, inst := range instances {
@@ -100,6 +104,7 @@ func (s *scaleDecider) updateInstanceSnapshot(instances []*Instance) bool {
 func (s *scaleDecider) findInstancesToTerminate(
 	maxInstanceNum int,
 ) []string {
+	fmt.Println("INSIDE findInstancesToTerminate()")
 	toTerminate := make(map[string]bool)
 	idleInstances := make(map[string]bool)
 
