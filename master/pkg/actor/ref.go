@@ -36,8 +36,8 @@ type (
 type Ref struct {
 	log *log.Entry
 
-	address        Address
-	registeredTime time.Time
+	address        Address // if this does not exist, does that mean the agent is not properly connected?
+	registeredTime time.Time // what about this? Is this the time of creation or the time of confirmation?
 
 	system       *System
 	actor        Actor

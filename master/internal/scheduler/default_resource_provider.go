@@ -203,7 +203,9 @@ func (d *DefaultRP) notifyOnStop(ctx *actor.Context, ref *actor.Ref, msg actor.M
 
 func (d *DefaultRP) sendProvisionerView(ctx *actor.Context) {
 	if d.provisioner != nil {
+		fmt.Println("updating provisioner view")
 		if snapshot, updateMade := d.provisionerView.Update(d); updateMade {
+			fmt.Println("sending provisioner view")
 			ctx.Tell(d.provisioner, snapshot)
 		}
 	}
@@ -227,8 +229,10 @@ func (d *DefaultRP) Receive(ctx *actor.Context) error {
 		agent.Initialize(msg.System, msg.Echo, ctx.Self())
 
 	case sproto.AddAgent:
+		// is this only activated when an agent successfully connects? Does this mean that we can use it for verification?
+		fmt.Println("We have added an agent!")
 		ctx.Log().Infof("adding agent: %s", msg.Agent.Address().Local())
-		d.agents[msg.Agent] = newAgentState(msg)
+		d.agents[msg.Agent] = newAgentState(msg) // maybe just see if all fields exist
 
 	case sproto.AddDevice:
 		ctx.Log().Infof("adding device: %s (%s)", msg.Device.String(), msg.Agent.Address().Local())

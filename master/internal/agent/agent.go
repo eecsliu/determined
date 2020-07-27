@@ -125,8 +125,8 @@ func (a *agent) handleIncomingWSMessage(ctx *actor.Context, msg aproto.MasterMes
 	switch {
 	case msg.AgentStarted != nil:
 		telemetry.ReportAgentConnected(ctx.Self().System(), a.uuid, msg.AgentStarted.Devices)
-
-		ctx.Tell(a.cluster, sproto.AddAgent{Agent: ctx.Self(), Label: msg.AgentStarted.Label})
+		// here, can we add something that records that the agent has indeed made contact? Just a bool or something
+		ctx.Tell(a.cluster, sproto.AddAgent{Agent: ctx.Self(), Label: msg.AgentStarted.Label}) // tell the cluster that an agent has been added?
 		ctx.Tell(a.slots, *msg.AgentStarted)
 		a.label = msg.AgentStarted.Label
 	case msg.ContainerStateChanged != nil:

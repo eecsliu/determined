@@ -1,6 +1,7 @@
 package provisioner
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -67,6 +68,7 @@ func (s *scaleDecider) needScale() bool {
 }
 
 func (s *scaleDecider) updateSchedulerSnapshot(snapshot *scheduler.ViewSnapshot) {
+	fmt.Println("UPDATING SCHEDULER SNAPSHOT")
 	s.agentSnapshot = make(map[string]*scheduler.AgentSummary)
 	for _, agent := range snapshot.Agents {
 		s.agentSnapshot[agent.Name] = agent
@@ -76,6 +78,7 @@ func (s *scaleDecider) updateSchedulerSnapshot(snapshot *scheduler.ViewSnapshot)
 }
 
 func (s *scaleDecider) updateInstanceSnapshot(instances []*Instance) bool {
+	fmt.Println("UPDATING INSTANCE SNAPSHOT")
 	updated := func() {
 		s.instanceSnapshot = make(map[string]*Instance)
 		for _, inst := range instances {
@@ -102,19 +105,29 @@ func (s *scaleDecider) findInstancesToTerminate(
 ) []string {
 	toTerminate := make(map[string]bool)
 	idleInstances := make(map[string]bool)
+	fmt.Println("finding idle instances")
+	fmt.Println(s.agentSnapshot)
+	fmt.Println("END AGENTSNAPSHOT")
 
 	// Terminate stopped instances and find idle instances.
 	for _, inst := range s.instanceSnapshot {
+		fmt.Println("iterating:", inst, inst.State, inst.LaunchTime)
 		switch inst.State {
 		case Stopped:
 			toTerminate[inst.ID] = true
 
 		case Running:
-			if _, ok := s.agentSnapshot[inst.AgentName]; ok {
+			if x, ok := s.agentSnapshot[inst.AgentName]; ok {
+				fmt.Println("agent snapshot:", x)
 				idleInstances[inst.ID] = true
 			}
 		}
 	}
+	fmt.Println("toTerminate: ")
+	fmt.Println(toTerminate)
+
+	fmt.Println("idleInstances")
+	fmt.Println(idleInstances)
 
 	// Terminate instances that are idle for a long time.
 	var longIdle map[string]bool
@@ -160,6 +173,7 @@ func (s *scaleDecider) calculateNumInstancesToLaunch(
 		return 0
 	}
 
+	fmt.Println("Calculating number of instances to launch")
 	instances := make([]*Instance, 0, len(s.instanceSnapshot))
 	for _, inst := range s.instanceSnapshot {
 		switch inst.State {
@@ -178,6 +192,7 @@ func (s *scaleDecider) calculateNumInstancesToLaunch(
 	}
 
 	// Check recently launched instances and subtract them from the total needed number.
+	// This kind of takes care of the problem, we just need to identify if an agent hasn't responded
 	now := time.Now()
 	numRecentlyLaunched := 0
 	for _, inst := range instances {

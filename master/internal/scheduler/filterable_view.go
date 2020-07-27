@@ -1,6 +1,9 @@
 package scheduler
 
-import "github.com/determined-ai/determined/master/pkg/actor"
+import (
+	"fmt"
+	"github.com/determined-ai/determined/master/pkg/actor"
+)
 
 // FilterableView keeps track of tasks and agents that pass the task and agent filters.
 // The `TaskSummary`s and `AgentSummary` should not be modified because a reference to
@@ -20,6 +23,7 @@ func newProvisionerView(provisionerSlotsPerInstance int) *FilterableView {
 		agents:      make(map[*actor.Ref]*AgentSummary),
 		taskFilter:  schedulableTaskFilter(provisionerSlotsPerInstance),
 		agentFilter: idleAgentFilter,
+		//agentFilter: noAgentFilter,
 	}
 }
 
@@ -42,7 +46,17 @@ func schedulableTaskFilter(provisionerSlotsPerInstance int) func(*Task) bool {
 	}
 }
 
+func noAgentFilter(agent *agentState) bool {
+	return true
+}
+
 func idleAgentFilter(agent *agentState) bool {
+	// this should actually work because if an agent has not connected, then it should not have any running containers
+	fmt.Println("idle agent filter in use")
+	fmt.Println(agent.label)
+	fmt.Println(agent.containers)
+	fmt.Println(agent.devices)
+	fmt.Println("EXITING IDLE AGENT FILTER")
 	return len(agent.containers) == 0
 }
 
@@ -51,6 +65,7 @@ func (v *FilterableView) Update(rp *DefaultRP) (ViewSnapshot, bool) {
 	// We must evaluate v.updateTasks(cluster) and v.updateAgents(cluster)
 	// before taking the logical or of the results to ensure that short circuit
 	// evaluation of booleans expressions don't prevent the updating of agents.
+	fmt.Println("updating tasks and agents")
 	tasksUpdateMade := v.updateTasks(rp)
 	agentsUpdateMade := v.updateAgents(rp)
 	return v.newSnapshot(), tasksUpdateMade || agentsUpdateMade
@@ -86,13 +101,19 @@ func (v *FilterableView) updateTasks(rp *DefaultRP) bool {
 
 func (v *FilterableView) updateAgents(rp *DefaultRP) bool {
 	newAgents := make(map[*actor.Ref]*AgentSummary)
-
+	//check here to see if the actor ref used as a key can show any information regarding connection status
+	fmt.Println("\ninside updateAgents. All Agents below:")
 	for actorRef, state := range rp.agents {
+		fmt.Println(actorRef.Address)
+		fmt.Println("status: ", state)
 		if v.agentFilter(state) {
 			agentSummary := newAgentSummary(state)
+			fmt.Println("agentSummary: ", agentSummary)
 			newAgents[actorRef] = &agentSummary
 		}
 	}
+
+	fmt.Println("agents after filter:", newAgents)
 
 	updateMade := false
 	if len(newAgents) != len(v.agents) {
