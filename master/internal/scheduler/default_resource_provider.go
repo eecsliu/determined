@@ -202,12 +202,12 @@ func (d *DefaultRP) notifyOnStop(ctx *actor.Context, ref *actor.Ref, msg actor.M
 }
 
 func (d *DefaultRP) sendProvisionerView(ctx *actor.Context) {
-	fmt.Println("SENDING PROVISIONER VIEW")
-	fmt.Println(d.provisioner == nil)
-	fmt.Println("was the provisioner nil?")
+	//fmt.Println("SENDING PROVISIONER VIEW")
+	//fmt.Println(d.provisioner == nil)
+	//fmt.Println("was the provisioner nil?")
 	if d.provisioner != nil {
 		if snapshot, updateMade := d.provisionerView.Update(d); updateMade {
-			fmt.Println("UPDATE MADE")
+			//fmt.Println("UPDATE MADE")
 			ctx.Tell(d.provisioner, snapshot)
 		}
 	}

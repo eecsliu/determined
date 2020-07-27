@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"fmt"
+	//"fmt"
 	"github.com/determined-ai/determined/master/pkg/actor"
 )
 
@@ -22,8 +22,8 @@ func newProvisionerView(provisionerSlotsPerInstance int) *FilterableView {
 		tasks:       make(map[TaskID]*TaskSummary),
 		agents:      make(map[*actor.Ref]*AgentSummary),
 		taskFilter:  schedulableTaskFilter(provisionerSlotsPerInstance),
-		//agentFilter: idleAgentFilter,
-		agentFilter: noFilter,
+		agentFilter: idleAgentFilter,
+		//agentFilter: noFilter,
 	}
 }
 
@@ -59,14 +59,14 @@ func (v *FilterableView) Update(rp *DefaultRP) (ViewSnapshot, bool) {
 	// We must evaluate v.updateTasks(cluster) and v.updateAgents(cluster)
 	// before taking the logical or of the results to ensure that short circuit
 	// evaluation of booleans expressions don't prevent the updating of agents.
-	fmt.Println("UPDATING SNAPSHOT")
+	//fmt.Println("UPDATING SNAPSHOT")
 	tasksUpdateMade := v.updateTasks(rp)
 	agentsUpdateMade := v.updateAgents(rp)
 	return v.newSnapshot(), tasksUpdateMade || agentsUpdateMade
 }
 
 func (v *FilterableView) updateTasks(rp *DefaultRP) bool {
-	fmt.Println("UPDATING TASKS")
+	//fmt.Println("UPDATING TASKS")
 	newTasks := make(map[TaskID]*TaskSummary)
 
 	for iterator := rp.taskList.iterator(); iterator.next(); {
@@ -95,7 +95,7 @@ func (v *FilterableView) updateTasks(rp *DefaultRP) bool {
 }
 
 func (v *FilterableView) updateAgents(rp *DefaultRP) bool {
-	fmt.Println("INSIDE updateAgents")
+	//fmt.Println("INSIDE updateAgents")
 	newAgents := make(map[*actor.Ref]*AgentSummary)
 
 	for actorRef, state := range rp.agents {
@@ -122,7 +122,7 @@ func (v *FilterableView) updateAgents(rp *DefaultRP) bool {
 }
 
 func (v *FilterableView) newSnapshot() ViewSnapshot {
-	fmt.Println("INSIDE newSnapshot")
+	//fmt.Println("INSIDE newSnapshot")
 	tasks := make([]*TaskSummary, 0, len(v.tasks))
 	for _, taskSummary := range v.tasks {
 		tasks = append(tasks, taskSummary)

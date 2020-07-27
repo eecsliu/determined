@@ -1,7 +1,7 @@
 package provisioner
 
 import (
-	"fmt"
+	//"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -78,12 +78,12 @@ func (p *Provisioner) Receive(ctx *actor.Context) error {
 		actors.NotifyAfter(ctx, actionCooldown, provisionerTick{})
 
 	case provisionerTick:
-		fmt.Println("RECEIVING PROVISIONERTICK")
+		//fmt.Println("RECEIVING PROVISIONERTICK")
 		p.provision(ctx)
 		actors.NotifyAfter(ctx, actionCooldown, provisionerTick{})
 
 	case scheduler.ViewSnapshot:
-		fmt.Println("RECEIVING VIEWSNAPSHOT MESSAGE")
+		//fmt.Println("RECEIVING VIEWSNAPSHOT MESSAGE")
 		p.scaleDecider.updateSchedulerSnapshot(&msg)
 
 	default:
@@ -98,10 +98,10 @@ func (p *Provisioner) SlotsPerInstance() int {
 }
 
 func (p *Provisioner) provision(ctx *actor.Context) {
-	fmt.Println("PROVISIONING ADDITIONAL ACTORS?")
-	fmt.Println("Checking Actor Context")
-	fmt.Println(ctx)
-	fmt.Println("FINISHED Checking Actor Context")
+	//fmt.Println("PROVISIONING ADDITIONAL ACTORS?")
+	//fmt.Println("Checking Actor Context")
+	//fmt.Println(ctx)
+	//fmt.Println("FINISHED Checking Actor Context")
 	instances, err := p.provider.list(ctx)
 	if err != nil {
 		ctx.Log().WithError(err).Error("cannot list instances")
@@ -115,7 +115,7 @@ func (p *Provisioner) provision(ctx *actor.Context) {
 	}
 
 	ctx.Log().Debug("scale happening")
-	fmt.Println("SCALE IS HAPPENING")
+	//fmt.Println("SCALE IS HAPPENING")
 	toTerminate := p.scaleDecider.findInstancesToTerminate(
 		p.provider.maxInstanceNum(),
 	)
