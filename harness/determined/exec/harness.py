@@ -122,6 +122,8 @@ def build_and_run_training_pipeline(env: det.EnvContext) -> None:
         )
         logging.info(f"Horovod config: {hvd_config.__dict__}.")
 
+        socket_mgr.bad_send()
+
         # Load the checkpoint, if necessary. Any possible sinks to this pipeline will need access
         # to this checkpoint.
         with maybe_load_checkpoint(storage_mgr, env.latest_checkpoint) as load_path:

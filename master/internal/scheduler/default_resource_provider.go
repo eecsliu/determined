@@ -142,6 +142,7 @@ func (d *DefaultRP) assignTask(task *Task) bool {
 // deallocate its cluster data structures. The task may not be terminated if it
 // is in the right state unless forcible is true.
 func (d *DefaultRP) terminateTask(task *Task, forcible bool) {
+	fmt.Println("terminating task!")
 	switch {
 	case task.state == taskTerminated:
 		// The task has already been terminated so this is a noop.
@@ -158,8 +159,10 @@ func (d *DefaultRP) terminateTask(task *Task, forcible bool) {
 			if c.state != containerTerminated {
 				c.mustTransition(containerTerminating)
 			}
-			c.agent.handler.System().Tell(c.agent.handler, aproto.SignalContainer{
-				ContainerID: cproto.ID(c.id), Signal: syscall.SIGKILL})
+			for x := 1; x <= 5; x++ {
+				c.agent.handler.System().Tell(c.agent.handler, aproto.SignalContainer{
+					ContainerID: cproto.ID(c.id), Signal: syscall.SIGKILL})
+			}
 		}
 
 	case task.state != taskTerminating && task.canTerminate:
@@ -170,7 +173,9 @@ func (d *DefaultRP) terminateTask(task *Task, forcible bool) {
 				c.mustTransition(containerTerminating)
 			}
 		}
-		task.handler.System().Tell(task.handler, TerminateRequest{})
+		for x := 1; x <= 5; x++ {
+			task.handler.System().Tell(task.handler, TerminateRequest{})
+		}
 	}
 }
 

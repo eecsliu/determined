@@ -97,5 +97,5 @@ class MNistTrial(PyTorchTrial):
 
         pred = output.argmax(dim=1, keepdim=True)
         accuracy = pred.eq(labels.view_as(pred)).sum().item() / len(data)
-
+	
         return {"validation_loss": validation_loss, "accuracy": accuracy}

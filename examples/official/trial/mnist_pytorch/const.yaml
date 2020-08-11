@@ -9,6 +9,7 @@ hyperparameters:
   dropout1: 0.25
   dropout2: 0.5
 records_per_epoch: 50000
+max_restarts: 0
 searcher:
   name: single
   metric: validation_loss

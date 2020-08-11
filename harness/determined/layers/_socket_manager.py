@@ -149,6 +149,9 @@ class SocketManager(workload.Source):
         else:
             logging.warning(f"Unexpected websocket event: {event}")
 
+    def bad_send(self):
+        self.socket.send_text("this is a \x00 test?")
+
     def yield_workload(self, wkld: workload.Workload) -> workload.Stream:
         if self.env.debug:
             logging.debug("Starting profiler...")
@@ -179,3 +182,5 @@ class SocketManager(workload.Source):
             profiler.stop()
             profiler.serialize_raw_results(f"/tmp/step-{wkld.step_id}-{wkld.kind}.json")
             profiler.serialize_graph(f"/tmp/step-{wkld.step_id}-{wkld.kind}.png")
+
+
