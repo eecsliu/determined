@@ -1,0 +1,14 @@
+description: mnist_pytorch_adaptive_search
+data:
+  url: https://s3-us-west-2.amazonaws.com/determined-ai-test-data/pytorch_mnist.tar.gz
+min_validation_period:
+  records: 128
+searcher:
+  max_length:
+    records: 384
+  max_trials: 2
+  metric: val_loss
+  mode: standard
+  name: adaptive_simple
+
+entrypoint: model_def:MNistTrial

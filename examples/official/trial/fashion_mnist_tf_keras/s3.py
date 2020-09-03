@@ -32,12 +32,18 @@ class S3TensorboardManager(base.TensorboardManager):
 
     @util.preserve_random_state
     def sync(self) -> None:
-        print(self.base_path)
+        print()
+        print("INSIDE SYNC")
+        items = self.to_sync()
+        print("LENGTH:", len(items))
         for path in self.to_sync():
             key_name = str(self.sync_path.joinpath(path.relative_to(self.base_path)))
 
             url = f"s3://{self.bucket}/{key_name}"
+            print(f"Uploading {path} to {url}")
             logging.debug(f"Uploading {path} to {url}")
 
             self.client.upload_file(str(path), self.bucket, key_name)
             self._synced_event_sizes[path] = path.stat().st_size
+
+        print()
