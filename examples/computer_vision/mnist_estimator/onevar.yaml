@@ -1,0 +1,18 @@
+description: estimator-onevar
+hyperparameters:
+  learning_rate: 1e-2
+  global_batch_size: 1
+scheduling_unit: 1
+searcher:
+  name: single
+  metric: mae
+  max_length:
+    batches: 5000
+  # max_trials: 1
+  smaller_is_better: true
+min_checkpoint_period:
+  batches: 100
+min_validation_period:
+  batches: 100
+max_restarts: 0
+entrypoint: onevar_def:MyLinearEstimator
