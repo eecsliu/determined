@@ -163,6 +163,8 @@ func (a *agent) handleIncomingWSMessage(ctx *actor.Context, msg aproto.MasterMes
 			RunMessage:  msg.ContainerLog.RunMessage,
 			AuxMessage:  msg.ContainerLog.AuxMessage,
 		})
+	case msg.AgentPreempted != nil:
+		ctx.Log().Infof("agent")
 	default:
 		check.Panic(errors.Errorf("error parsing incoming message"))
 	}

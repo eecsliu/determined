@@ -34,6 +34,7 @@ type MasterMessage struct {
 	AgentStarted          *AgentStarted
 	ContainerStateChanged *ContainerStateChanged
 	ContainerLog          *ContainerLog
+	AgentPreempted		  *AgentPreempted
 }
 
 // AgentStarted notifies the master that the agent has started up.
@@ -55,6 +56,10 @@ type ContainerStateChanged struct {
 type ContainerStarted struct {
 	ProxyAddress  string
 	ContainerInfo types.ContainerJSON
+}
+
+type AgentPreempted struct {
+	timestamp time.Time
 }
 
 // Addresses calculates the address of containers and hosts based on the container
