@@ -59,7 +59,7 @@ type ContainerStarted struct {
 }
 
 type AgentPreempted struct {
-	timestamp time.Time
+	Timestamp time.Time
 }
 
 // Addresses calculates the address of containers and hosts based on the container

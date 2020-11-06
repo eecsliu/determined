@@ -39,6 +39,8 @@ const (
 	wsSecureScheme     = "wss"
 )
 
+type PreemptionCheck struct{}
+
 type agent struct {
 	Version               string
 	Options               `json:"options"`
@@ -63,6 +65,11 @@ func (a *agent) Receive(ctx *actor.Context) error {
 		ctx.Log().Infof("Determined agent %s (built with %s)", a.Version, runtime.Version())
 		actors.NotifyOnSignal(ctx, syscall.SIGINT, syscall.SIGTERM)
 		return a.connect(ctx)
+
+	case PreemptionCheck:
+		timestamp := time.Now()
+		ctx.Ask(a.socket, api.WriteMessage{
+			Message: proto.MasterMessage{AgentPreempted: &proto.AgentPreempted{Timestamp: timestamp}}})
 
 	case proto.AgentMessage:
 		switch {
@@ -141,6 +148,11 @@ func (a *agent) Receive(ctx *actor.Context) error {
 		}
 
 		ctx.Log().Info("agent shut down")
+
+	case proto.AgentPreempted:
+		if a.socket != nil {
+			ctx.Ask(a.socket, api.WriteMessage{Message: proto.MasterMessage{AgentPreempted: &msg}})
+		}
 
 	default:
 		return actor.ErrUnexpectedMessage(ctx)
