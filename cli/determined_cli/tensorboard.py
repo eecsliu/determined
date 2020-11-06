@@ -11,7 +11,7 @@ from determined_common.api.authentication import authentication_required
 from determined_common.check import check_eq
 
 from . import render
-from .command import CONTEXT_DESC, Command, parse_config, render_event_stream
+from .command import CONFIG_DESC, CONTEXT_DESC, Command, parse_config, render_event_stream
 from .declarative_argparse import Arg, Cmd
 
 Tensorboard = namedtuple(
@@ -38,7 +38,7 @@ def start_tensorboard(args: Namespace) -> None:
         print("Either experiment_ids or trial_ids must be specified.")
         sys.exit(1)
 
-    config = parse_config(args.config_file, None, [], [])
+    config = parse_config(args.config_file, None, args.config, [])
     req_body = {
         "config": config,
         "trial_ids": args.trial_ids,
@@ -151,6 +151,7 @@ args_description = [
                      "be used."),
             Arg("--config-file", default=None, type=FileType("r"),
                 help="command config file (.yaml)"),
+            Arg("--config", action="append", default=[], help=CONFIG_DESC),
             Arg("-t", "--trial-ids", nargs=ONE_OR_MORE, type=int,
                 help="trial IDs to load into TensorBoard; at most 100 trials are "
                      "allowed per TensorBoard instance"),
