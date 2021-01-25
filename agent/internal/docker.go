@@ -166,6 +166,11 @@ func (d *dockerActor) pullImage(ctx *actor.Context, msg pullImage) {
 }
 
 func (d *dockerActor) runContainer(ctx *actor.Context, msg container.RunSpec) {
+	fmt.Println("PRINTING ENV")
+	for _, x := range msg.ContainerConfig.Env {
+		fmt.Println(x)
+	}
+	fmt.Println("PRINTED ENV")
 	response, err := d.ContainerCreate(
 		context.Background(), &msg.ContainerConfig, &msg.HostConfig, &msg.NetworkingConfig, "")
 	if err != nil {
