@@ -23,6 +23,7 @@ spec:
       containers:
       - command:
         - kube-scheduler
+        - -v=3
         - --leader-elect=false
         - --scheduler-name=coscheduler
         - --config=/etc/config/config.yaml

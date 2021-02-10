@@ -154,3 +154,7 @@ telemetry:
       ## This value must contain the contents of the certificate file, not a path. It may be set
       ## directly or using `helm install --set-file logging.security.tls.certificate=<path>`.
       # certificate: <certificate contents>
+
+## Configure if Determined uses a scheduler aside from the default Kubernetes scheduler
+## Currently supports the coscheduler for gang scheduling.
+# customScheduler: coscheduler

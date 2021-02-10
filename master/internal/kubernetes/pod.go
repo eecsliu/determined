@@ -46,6 +46,7 @@ type pod struct {
 	configMapInterface       typedV1.ConfigMapInterface
 	resourceRequestQueue     *actor.Ref
 	leaveKubernetesResources bool
+	customScheduler          string
 
 	pod              *k8sV1.Pod
 	podName          string
@@ -81,6 +82,7 @@ func newPod(
 	configMapInterface typedV1.ConfigMapInterface,
 	resourceRequestQueue *actor.Ref,
 	leaveKubernetesResources bool,
+	customScheduler string,
 ) *pod {
 	podContainer := container.Container{
 		Parent: msg.TaskActor.Address(),
@@ -114,6 +116,7 @@ func newPod(
 		configMapName:            uniqueName,
 		container:                podContainer,
 		containerNames:           containerNames,
+		customScheduler:          customScheduler,
 	}
 }
 
@@ -178,9 +181,9 @@ func (p *pod) createPodSpecAndSubmit(ctx *actor.Context) error {
 	case p.taskSpec.StartCommand != nil:
 		err = p.createPodSpecForCommand(ctx)
 	case p.taskSpec.StartContainer != nil:
-		err = p.createPodSpecForTrial(ctx)
+		err = p.createPodSpecForTrial(ctx, p.customScheduler)
 	case p.taskSpec.GCCheckpoints != nil:
-		err = p.createPodSpecForGC(ctx)
+		err = p.createPodSpecForGC(ctx, p.customScheduler)
 	default:
 		return errors.Errorf("unexpected task spec received")
 	}
