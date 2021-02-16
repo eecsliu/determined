@@ -169,6 +169,32 @@ func (p *pod) configureVolumes(
 	return initContainerVolumeMounts, volumeMounts, volumes
 }
 
+func (p *pod) modifyPodSpec(newPod *k8sV1.Pod, config model.ExperimentConfig, scheduler string, isGC bool) {
+	minAvailable := 1
+	if !isGC {
+		minAvailable = int(math.Ceil(float64(config.Resources.SlotsPerTrial)/ float64(p.gpus)))
+	}
+
+	newName := ""
+	for i, v := range strings.Split(p.podName, "-") {
+		if i > 3 {
+			break
+		}
+		newName += v
+	}
+	if isGC {
+		newName += "GC"
+	}
+
+	newPod.APIVersion = "v1"
+	newPod.Kind = "Pod"
+	newPod.Labels = map[string]string{
+		"pod-group.scheduling.sigs.k8s.io/name": newName,
+		"pod-group.scheduling.sigs.k8s.io/min-available": strconv.Itoa(minAvailable),
+	}
+	newPod.Spec.SchedulerName = scheduler
+}
+
 func (p *pod) configurePodSpec(
 	ctx *actor.Context,
 	volumes []k8sV1.Volume,
@@ -176,14 +202,21 @@ func (p *pod) configurePodSpec(
 	determinedContainer k8sV1.Container,
 	sidecarContainers []k8sV1.Container,
 	podSpec *k8sV1.Pod,
+	scheduler string,
+	isGC bool,
 ) *k8sV1.Pod {
-	// what we might need to do is find the number of GPUs being used - might have to infer it from something else
-	// we'll have to unpack the podgroup name and minavailable before it enters this function, and pass them as args
-	// once we get inside this function, we apply the args.
 	if podSpec == nil {
 		podSpec = &k8sV1.Pod{}
 	} else {
 		podSpec = podSpec.DeepCopy()
+	}
+
+	if scheduler == "coscheduler" {
+		if isGC {
+			p.modifyPodSpec(podSpec, p.taskSpec.GCCheckpoints.ExperimentConfig, scheduler, isGC)
+		} else {
+			p.modifyPodSpec(podSpec, p.taskSpec.StartContainer.ExperimentConfig, scheduler, isGC)
+		}
 	}
 
 	podSpec.ObjectMeta.Name = p.podName
@@ -253,22 +286,7 @@ func (p *pod) createPodSpecForTrial(ctx *actor.Context, customScheduler string) 
 		fmt.Sprintf("%d", p.ports[0]), fmt.Sprintf("%d", p.ports[1]),
 	}
 
-	if customScheduler == "coscheduler" {
-		fmt.Println("DETECTED COSCHEDULER!!!!!")
-	}
-	spec, ok := p.modifiedPodSpec(p.taskSpec.StartContainer.ExperimentConfig, customScheduler)
-	if ok {
-		p.taskSpec.StartContainer.ExperimentConfig.Environment.PodSpec = &spec
-	}
-
 	envVarsMap := tasks.TrialEnvVars(p.taskSpec, rendezvousPorts, 0)
-	fmt.Println("PRINTING TRIAL ENV VARS")
-	fmt.Println(exp.ExperimentConfig.Environment.PodSpec.Labels)
-	fmt.Println(exp.ExperimentConfig.Environment.PodSpec.Spec.SchedulerName)
-	fmt.Println(exp.ExperimentConfig.Resources.SlotsPerTrial)
-	fmt.Println(exp.ExperimentConfig.Resources.MaxSlots)
-	fmt.Println("DONE PRINTING ENV VARS")
-	fmt.Println()
 	envVarsMap["DET_K8S_LOG_TO_FILE"] = "true"
 	envVars, err := p.configureEnvVars(
 		envVarsMap,
@@ -362,6 +380,8 @@ func (p *pod) createPodSpecForTrial(ctx *actor.Context, customScheduler string) 
 		mainContainer,
 		[]k8sV1.Container{fluentContainer},
 		exp.ExperimentConfig.Environment.PodSpec,
+		customScheduler,
+		false,
 	)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, fluentFiles)
@@ -417,7 +437,7 @@ func (p *pod) createPodSpecForCommand(ctx *actor.Context) error {
 	}
 
 	p.pod = p.configurePodSpec(
-		ctx, volumes, initContainer, container, nil, cmd.Config.Environment.PodSpec)
+		ctx, volumes, initContainer, container, nil, cmd.Config.Environment.PodSpec, "default", false)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, nil)
 	if err != nil {
@@ -439,22 +459,12 @@ func (p *pod) createPodSpecForGC(ctx *actor.Context, customScheduler string) err
 	initContainerVolumeMounts, volumeMounts, volumes := p.configureVolumes(
 		ctx, tasks.GCDockerMounts(gcc), runArchives)
 
-	p.modifiedPodSpec(p.taskSpec.GCCheckpoints.ExperimentConfig, customScheduler)
-
-	spec, ok := p.modifiedPodSpec(p.taskSpec.GCCheckpoints.ExperimentConfig, customScheduler)
-	if ok {
-		p.taskSpec.GCCheckpoints.ExperimentConfig.Environment.PodSpec = &spec
-	}
-
 	envVars, err := p.configureEnvVars(
 		tasks.GCEnvVars(),
 		p.taskSpec.GCCheckpoints.ExperimentConfig.Environment,
 		deviceType,
 	)
-	fmt.Println("PRINTING ENV VARS")
-	fmt.Println(gcc.ExperimentConfig.Environment.PodSpec.Labels)
-	fmt.Println("DONE PRINTING ENV VARS")
-	fmt.Println()
+
 	if err != nil {
 		return err
 	}
@@ -479,7 +489,7 @@ func (p *pod) createPodSpecForGC(ctx *actor.Context, customScheduler string) err
 	}
 
 	p.pod = p.configurePodSpec(
-		ctx, volumes, initContainer, container, nil, gcc.ExperimentConfig.Environment.PodSpec)
+		ctx, volumes, initContainer, container, nil, gcc.ExperimentConfig.Environment.PodSpec, customScheduler, true)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, nil)
 	if err != nil {
@@ -487,25 +497,6 @@ func (p *pod) createPodSpecForGC(ctx *actor.Context, customScheduler string) err
 	}
 
 	return nil
-}
-
-func (p *pod) modifiedPodSpec(config model.ExperimentConfig, scheduler string) (k8sV1.Pod, bool) {
-	if config.Environment.PodSpec != nil {
-		return k8sV1.Pod{}, false
-	}
-
-	minAvailable := int(math.Ceil(float64(config.Resources.SlotsPerTrial)/ float64(p.gpus)))
-
-	newPod := k8sV1.Pod{}
-	newPod.APIVersion = "v1"
-	newPod.Kind = "Pod"
-	newPod.Labels = map[string]string{
-		"pod-group.scheduling.sigs.k8s.io/name": p.podName,
-		"pod-group.scheduling.sigs.k8s.io/min-available": strconv.Itoa(minAvailable),
-	}
-	newPod.Spec.SchedulerName = scheduler
-	return newPod, true
-
 }
 
 func configureUniqueName(t tasks.TaskSpec) string {
