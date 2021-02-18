@@ -169,10 +169,20 @@ func (p *pod) configureVolumes(
 	return initContainerVolumeMounts, volumeMounts, volumes
 }
 
-func (p *pod) modifyPodSpec(newPod *k8sV1.Pod, config model.ExperimentConfig, scheduler string, isGC bool) {
+func (p *pod) modifyPodSpec(newPod *k8sV1.Pod, spec tasks.TaskSpec, scheduler string, isGC bool) {
 	if scheduler != "coscheduler" {
 		return
 	}
+
+	var config model.ExperimentConfig
+
+	if isGC {
+		config =  p.taskSpec.GCCheckpoints.ExperimentConfig
+	} else {
+		config = p.taskSpec.StartContainer.ExperimentConfig
+	}
+
+	newPod.Spec.SchedulerName = scheduler
 
 	if newPod.Labels == nil {
 		newPod.Labels = map[string]string{}
@@ -219,11 +229,7 @@ func (p *pod) configurePodSpec(
 		podSpec = podSpec.DeepCopy()
 	}
 
-	if isGC {
-		p.modifyPodSpec(podSpec, p.taskSpec.GCCheckpoints.ExperimentConfig, scheduler, isGC)
-	} else {
-		p.modifyPodSpec(podSpec, p.taskSpec.StartContainer.ExperimentConfig, scheduler, isGC)
-	}
+	p.modifyPodSpec(podSpec, p.taskSpec, scheduler, isGC)
 
 	podSpec.ObjectMeta.Name = p.podName
 	podSpec.ObjectMeta.Namespace = p.namespace //figure out what objectmeta labels are
