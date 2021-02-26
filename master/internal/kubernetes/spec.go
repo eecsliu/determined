@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"strconv"
 	"strings"
@@ -172,6 +173,32 @@ func (p *pod) configureVolumes(
 	return initContainerVolumeMounts, volumeMounts, volumes
 }
 
+func (p *pod) modifyPodSpec(newPod *k8sV1.Pod, scheduler string) {
+	if scheduler != "coscheduler" {
+		return
+	}
+
+	resources := p.taskSpec.ResourcesConfig()
+	var minAvailable int
+
+	if p.taskSpec.Description() == "cmd"{
+		return
+	}
+	if p.taskSpec.Description() == "gc" {
+		minAvailable = 1
+	} else {
+		minAvailable = int(math.Ceil(float64(resources.SlotsPerTrial) / float64(p.gpus)))
+	}
+
+	newPod.Spec.SchedulerName = scheduler
+
+	_, ok := newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/name"]
+	if !ok {
+		newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/name"] = configurePodGroupName(p.podName)
+		newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/min-available"] = strconv.Itoa(minAvailable)
+	}
+}
+
 func (p *pod) configurePodSpec(
 	ctx *actor.Context,
 	volumes []k8sV1.Volume,
@@ -179,6 +206,7 @@ func (p *pod) configurePodSpec(
 	determinedContainer k8sV1.Container,
 	sidecarContainers []k8sV1.Container,
 	podSpec *k8sV1.Pod,
+	scheduler string,
 ) *k8sV1.Pod {
 	if podSpec == nil {
 		podSpec = &k8sV1.Pod{}
@@ -192,6 +220,8 @@ func (p *pod) configurePodSpec(
 		podSpec.ObjectMeta.Labels = make(map[string]string)
 	}
 	podSpec.ObjectMeta.Labels[determinedLabel] = p.taskSpec.TaskID
+
+	p.modifyPodSpec(podSpec, scheduler)
 
 	nonDeterminedContainers := make([]k8sV1.Container, 0)
 	for idx, container := range podSpec.Spec.Containers {
@@ -230,7 +260,7 @@ func (p *pod) configurePodSpec(
 	return podSpec
 }
 
-func (p *pod) createPodSpec(ctx *actor.Context) error {
+func (p *pod) createPodSpec(ctx *actor.Context, scheduler string) error {
 	deviceType := device.CPU
 	if p.gpus > 0 {
 		deviceType = device.GPU
@@ -351,7 +381,7 @@ func (p *pod) createPodSpec(ctx *actor.Context) error {
 	}
 
 	p.pod = p.configurePodSpec(
-		ctx, volumes, initContainer, container, sidecars, env.PodSpec)
+		ctx, volumes, initContainer, container, sidecars, env.PodSpec, scheduler)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, fluentFiles)
 	if err != nil {
@@ -362,6 +392,17 @@ func (p *pod) createPodSpec(ctx *actor.Context) error {
 
 func configureUniqueName(t tasks.TaskSpec) string {
 	return fmt.Sprintf("%s-%s-%s", t.Description(), t.TaskID, petName.Generate(2, "-"))
+}
+
+func configurePodGroupName(podName string) string {
+	newName := ""
+	for i, v := range strings.Split(podName, "-") {
+		if i > 3 {
+			break
+		}
+		newName += v
+	}
+	return newName
 }
 
 func configureSecurityContext(agentUserGroup *model.AgentUserGroup) *k8sV1.SecurityContext {
