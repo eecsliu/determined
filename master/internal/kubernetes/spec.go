@@ -191,22 +191,24 @@ func (p *pod) modifyPodSpec(newPod *k8sV1.Pod, scheduler string) {
 		minAvailable = int(math.Ceil(float64(resources.SlotsPerTrial) / float64(p.gpus)))
 	}
 
-	newPod.Spec.SchedulerName = scheduler
-
-	_, ok := newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/name"]
-	if !ok {
-		newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/name"] = configurePodGroupName(p.podName)
-		newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/min-available"] = strconv.Itoa(minAvailable)
-	}
-
 	if newPod.Spec.PriorityClassName == "" {
 		newPod.Spec.PriorityClassName = "medium-priority"
 	}
+	if newPod.Spec.SchedulerName != "" {
+		return
+	}
+	newPod.Spec.SchedulerName = scheduler
 	if newPod.APIVersion == "" {
 		newPod.APIVersion = "v1"
 	}
 	if newPod.Kind == "" {
 		newPod.Kind = "Pod"
+	}
+
+	_, ok := newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/name"]
+	if !ok {
+		newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/name"] = configurePodGroupName(p.podName)
+		newPod.ObjectMeta.Labels["pod-group.scheduling.sigs.k8s.io/min-available"] = strconv.Itoa(minAvailable)
 	}
 }
 
