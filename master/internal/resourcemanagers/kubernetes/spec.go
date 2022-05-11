@@ -379,6 +379,7 @@ func (p *pod) createPodSpec(ctx *actor.Context, scheduler string) error {
 		initContainerVolumeMounts,
 		env.Image().For(deviceType),
 		configureImagePullPolicy(env),
+		spec.AgentUserGroup,
 	)
 
 	var sidecars []k8sV1.Container
@@ -532,6 +533,7 @@ func configureInitContainer(
 	volumeMounts []k8sV1.VolumeMount,
 	image string,
 	imagePullPolicy k8sV1.PullPolicy,
+	agentUserGroup *model.AgentUserGroup,
 ) k8sV1.Container {
 	return k8sV1.Container{
 		Name:    "determined-init-container",
@@ -540,6 +542,7 @@ func configureInitContainer(
 			fmt.Sprintf("%d", numArchives), initContainerTarSrcPath, initContainerTarDstPath},
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy,
+		SecurityContext: configureSecurityContext(agentUserGroup),
 		VolumeMounts:    volumeMounts,
 		WorkingDir:      initContainerWorkDir,
 	}
