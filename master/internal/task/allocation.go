@@ -360,8 +360,9 @@ func (a *Allocation) Receive(ctx *actor.Context) error {
 			a.Error(ctx, err)
 		}
 	case sproto.ProvisionerFailure:
-		a.req.State = sproto.SchedulingStateUnschedulable
-		a.Error(ctx, fmt.Errorf("provisioning failed: %s", msg.Err))
+		a.Error(ctx, sproto.InvalidResourcesRequestError{
+			Cause: msg.Err,
+		})
 
 	default:
 		a.Error(ctx, actor.ErrUnexpectedMessage(ctx))
@@ -949,13 +950,6 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 		return
 	}
 	a.exited = true
-
-	if a.req.State == sproto.SchedulingStateUnschedulable {
-		exit.Err = sproto.InvalidResourcesRequestError{
-			Cause: errors.New(reason),
-		}
-	}
-
 	exitReason := fmt.Sprintf("allocation terminated after %s", reason)
 	defer ctx.Tell(ctx.Self().Parent(), exit)
 	defer a.rm.Release(ctx, sproto.ResourcesReleased{AllocationRef: ctx.Self()})
@@ -971,9 +965,6 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 		ctx.Log().WithError(err).Error("failed to purge restorable resources")
 	}
 
-	if len(a.resources) == 0 {
-		return
-	}
 	defer a.markResourcesReleased(ctx)
 
 	if a.req.Preemptible {
@@ -1037,6 +1028,9 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 			return
 		}
 	default:
+		if len(a.resources) == 0 {
+			return
+		}
 		// If we ever exit without a reason and we have no exited resources, something has gone
 		// wrong.
 		panic("allocation exited early without a valid reason")
