@@ -525,9 +525,13 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 
 	case schedulerTick:
 		if rp.provisioner != nil && rp.provisioner.HasError() {
-			// todo: make this logic smarter, we should only fail unallocated tasks
 			for it := rp.taskList.Iterator(); it.Next(); {
-				ctx.Tell(it.Value().AllocationRef, sproto.ProvisionerFailure{
+				ref := it.Value().AllocationRef
+				allocated := rp.taskList.Allocation(ref)
+				if tasklist.AssignmentIsScheduled(allocated) {
+					continue
+				}
+				ctx.Tell(ref, sproto.ProvisionerFailure{
 					Err: errors.New("provisioner error"),
 				})
 			}
