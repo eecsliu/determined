@@ -524,18 +524,7 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 		})
 
 	case schedulerTick:
-		if rp.provisioner != nil && rp.provisioner.HasError() {
-			for it := rp.taskList.Iterator(); it.Next(); {
-				ref := it.Value().AllocationRef
-				allocated := rp.taskList.Allocation(ref)
-				if tasklist.AssignmentIsScheduled(allocated) {
-					continue
-				}
-				ctx.Tell(ref, sproto.ProvisionerFailure{
-					Err: errors.New("provisioner error"),
-				})
-			}
-		} else if rp.reschedule {
+		if rp.reschedule {
 			ctx.Log().Debug("scheduling")
 			rp.agentStatesCache = rp.fetchAgentStates(ctx)
 			defer func() {
@@ -552,6 +541,19 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 				rp.releaseResource(ctx, taskActor)
 			}
 			rp.sendScalingInfo(ctx)
+
+			if rp.provisioner != nil && rp.provisioner.HasError() {
+				for it := rp.taskList.Iterator(); it.Next(); {
+					ref := it.Value().AllocationRef
+					allocated := rp.taskList.Allocation(ref)
+					if tasklist.AssignmentIsScheduled(allocated) {
+						continue
+					}
+					ctx.Tell(ref, sproto.ProvisionerFailure{
+						Err: errors.New("provisioner error"),
+					})
+				}
+			}
 		}
 		rp.reschedule = false
 		reschedule = false
