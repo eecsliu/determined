@@ -526,14 +526,29 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 	case schedulerTick:
 		if rp.reschedule {
 			ctx.Log().Debug("scheduling")
+
+			provisionerError := rp.getProvisionerError()
+			if provisionerError != nil {
+				ctx.Log().WithError(provisionerError).Error("provisioner error, not allocating resources")
+				for it := rp.taskList.Iterator(); it.Next(); {
+					ref := it.Value().AllocationRef
+					allocated := rp.taskList.Allocation(ref)
+					if tasklist.AssignmentIsScheduled(allocated) {
+						continue
+					}
+					ctx.Tell(ref, sproto.ProvisionerFailure{Err: provisionerError})
+					rp.taskList.RemoveTaskByHandler(ref)
+				}
+			}
+
 			rp.agentStatesCache = rp.fetchAgentStates(ctx)
 			defer func() {
 				rp.agentStatesCache = nil
 			}()
 
 			toAllocate, toRelease := rp.scheduler.Schedule(ctx, rp)
-			ctx.Log().Debugf("toAllocate: %d", len(toAllocate))
-			ctx.Log().Debugf("toRelease: %d", len(toRelease))
+			ctx.Log().WithError(provisionerError).Debugf("toAllocate: %d", len(toAllocate))
+			ctx.Log().WithError(provisionerError).Debugf("toRelease: %d", len(toRelease))
 			for _, req := range toAllocate {
 				rp.allocateResources(ctx, req)
 			}
@@ -541,19 +556,6 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 				rp.releaseResource(ctx, taskActor)
 			}
 			rp.sendScalingInfo(ctx)
-
-			if rp.provisioner != nil && rp.provisioner.HasError() {
-				for it := rp.taskList.Iterator(); it.Next(); {
-					ref := it.Value().AllocationRef
-					allocated := rp.taskList.Allocation(ref)
-					if tasklist.AssignmentIsScheduled(allocated) {
-						continue
-					}
-					ctx.Tell(ref, sproto.ProvisionerFailure{
-						Err: errors.New("provisioner error"),
-					})
-				}
-			}
 		}
 		rp.reschedule = false
 		reschedule = false
@@ -841,4 +843,11 @@ func (rp *resourcePool) refreshAgentStateCacheFor(ctx *actor.Context, agents []*
 			delete(rp.agentStatesCache, ref)
 		}
 	}
+}
+
+func (rp *resourcePool) getProvisionerError() error {
+	if rp.provisioner == nil {
+		return nil
+	}
+	return rp.provisioner.GetError()
 }

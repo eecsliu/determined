@@ -42,6 +42,13 @@ type Provisioner struct {
 	provider         provider
 	scaleDecider     *scaleDecider
 	telemetryLimiter *rate.Limiter
+	errorTimeout     time.Duration
+	poolName         string
+}
+
+type errorInfo struct {
+	err  error
+	time time.Time
 }
 
 type provider interface {
@@ -51,7 +58,8 @@ type provider interface {
 	list(ctx *actor.Context) ([]*model.Instance, error)
 	launch(ctx *actor.Context, instanceNum int)
 	terminate(ctx *actor.Context, instanceIDs []string)
-	hasError() bool
+	getErrorInfo() *errorInfo
+	clearError()
 }
 
 // New creates a new Provisioner.
@@ -75,6 +83,11 @@ func New(
 		}
 	}
 
+	var errorTimeout time.Duration
+	if config != nil && config.ErrorTimeout != nil {
+		errorTimeout = time.Duration(*config.ErrorTimeout)
+	}
+
 	return &Provisioner{
 		provider: cluster,
 		scaleDecider: newScaleDecider(
@@ -87,6 +100,8 @@ func New(
 			db,
 		),
 		telemetryLimiter: rate.NewLimiter(rate.Every(telemetryCooldown), 1),
+		errorTimeout:     errorTimeout,
+		poolName:         resourcePool,
 	}, nil
 }
 
@@ -166,6 +181,14 @@ func (p *Provisioner) provision(ctx *actor.Context) {
 	}
 }
 
-func (p *Provisioner) HasError() bool {
-	return p.provider.hasError()
+func (p *Provisioner) GetError() error {
+	errorInfo := p.provider.getErrorInfo()
+	if errorInfo == nil {
+		return nil
+	}
+	if p.errorTimeout <= 0 || time.Now().After(errorInfo.time.Add(p.errorTimeout)) {
+		p.provider.clearError()
+		return nil
+	}
+	return errorInfo.err
 }

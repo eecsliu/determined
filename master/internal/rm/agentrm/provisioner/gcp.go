@@ -30,6 +30,8 @@ type gcpCluster struct {
 	metadata     []*compute.MetadataItems
 
 	client *compute.Service
+
+	errorInfo *errorInfo
 }
 
 func newGCPCluster(
@@ -320,6 +322,10 @@ func (c *gcpCluster) newInstancesFromOperations(operations []*compute.Operation)
 	return instances
 }
 
-func (c *gcpCluster) hasError() bool {
-	return false
+func (c *gcpCluster) getErrorInfo() *errorInfo {
+	return c.errorInfo
+}
+
+func (c *gcpCluster) clearError() {
+	c.errorInfo = nil
 }
