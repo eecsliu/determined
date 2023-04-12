@@ -359,10 +359,8 @@ func (a *Allocation) Receive(ctx *actor.Context) error {
 		if err := a.idleTimeoutWatcher.ReceiveMsg(ctx); err != nil {
 			a.Error(ctx, err)
 		}
-	case sproto.ProvisionerFailure:
-		a.Error(ctx, sproto.InvalidResourcesRequestError{
-			Cause: msg.Err,
-		})
+	case sproto.InvalidResourcesRequestError:
+		a.Error(ctx, msg)
 
 	default:
 		a.Error(ctx, actor.ErrUnexpectedMessage(ctx))

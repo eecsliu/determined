@@ -536,7 +536,7 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 					if tasklist.AssignmentIsScheduled(allocated) {
 						continue
 					}
-					ctx.Tell(ref, sproto.ProvisionerFailure{Err: provisionerError})
+					ctx.Tell(ref, sproto.InvalidResourcesRequestError{Cause: provisionerError})
 					rp.taskList.RemoveTaskByHandler(ref)
 				}
 			}
