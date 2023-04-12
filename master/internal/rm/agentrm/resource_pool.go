@@ -526,6 +526,10 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 	case schedulerTick:
 		if rp.reschedule {
 			ctx.Log().Debug("scheduling")
+			rp.agentStatesCache = rp.fetchAgentStates(ctx)
+			defer func() {
+				rp.agentStatesCache = nil
+			}()
 
 			provisionerError := rp.getProvisionerError()
 			if provisionerError != nil {
@@ -540,15 +544,19 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 					rp.taskList.RemoveTaskByHandler(ref)
 				}
 			}
-
-			rp.agentStatesCache = rp.fetchAgentStates(ctx)
-			defer func() {
-				rp.agentStatesCache = nil
-			}()
+			for it := rp.taskList.Iterator(); it.Next(); {
+				task := it.Value()
+				if task.SlotsNeeded > rp.slotsPerInstance {
+					err := errors.Errorf("task %s requires %d slots, but the resource pool only supports %d slots per instance", task.Name, task.SlotsNeeded, rp.slotsPerInstance)
+					ctx.Log().WithError(err).Error("task requires too many slots, not allocating resources")
+					ctx.Tell(task.AllocationRef, sproto.InvalidResourcesRequestError{Cause: err})
+					rp.taskList.RemoveTaskByHandler(task.AllocationRef)
+				}
+			}
 
 			toAllocate, toRelease := rp.scheduler.Schedule(ctx, rp)
-			ctx.Log().WithError(provisionerError).Debugf("toAllocate: %d", len(toAllocate))
-			ctx.Log().WithError(provisionerError).Debugf("toRelease: %d", len(toRelease))
+			ctx.Log().Debugf("toAllocate: %d", len(toAllocate))
+			ctx.Log().Debugf("toRelease: %d", len(toRelease))
 			for _, req := range toAllocate {
 				rp.allocateResources(ctx, req)
 			}
