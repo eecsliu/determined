@@ -531,29 +531,7 @@ func (rp *resourcePool) Receive(ctx *actor.Context) error {
 				rp.agentStatesCache = nil
 			}()
 
-			provisionerError := rp.getProvisionerError()
-			if provisionerError != nil {
-				ctx.Log().WithError(provisionerError).Error("provisioner error, not allocating resources")
-				for it := rp.taskList.Iterator(); it.Next(); {
-					ref := it.Value().AllocationRef
-					allocated := rp.taskList.Allocation(ref)
-					if tasklist.AssignmentIsScheduled(allocated) {
-						continue
-					}
-					ctx.Tell(ref, sproto.InvalidResourcesRequestError{Cause: provisionerError})
-					rp.taskList.RemoveTaskByHandler(ref)
-				}
-			}
-			for it := rp.taskList.Iterator(); it.Next(); {
-				task := it.Value()
-				if task.SlotsNeeded > rp.slotsPerInstance {
-					err := errors.Errorf("task %s requires %d slots, but the resource pool only supports %d slots per instance", task.Name, task.SlotsNeeded, rp.slotsPerInstance)
-					ctx.Log().WithError(err).Error("task requires too many slots, not allocating resources")
-					ctx.Tell(task.AllocationRef, sproto.InvalidResourcesRequestError{Cause: err})
-					rp.taskList.RemoveTaskByHandler(task.AllocationRef)
-				}
-			}
-
+			rp.pruneTaskList(ctx)
 			toAllocate, toRelease := rp.scheduler.Schedule(ctx, rp)
 			ctx.Log().Debugf("toAllocate: %d", len(toAllocate))
 			ctx.Log().Debugf("toRelease: %d", len(toRelease))
@@ -853,9 +831,26 @@ func (rp *resourcePool) refreshAgentStateCacheFor(ctx *actor.Context, agents []*
 	}
 }
 
-func (rp *resourcePool) getProvisionerError() error {
+func (rp *resourcePool) pruneTaskList(ctx *actor.Context) {
 	if rp.provisioner == nil {
-		return nil
+		return
 	}
-	return rp.provisioner.GetError()
+	err := rp.provisioner.GetError()
+	if err == nil {
+		return
+	}
+	ctx.Log().WithError(err).Error("provisioner in error state")
+	slotCount := rp.provisioner.CurrentSlotCount(ctx)
+	for it := rp.taskList.Iterator(); it.Next(); {
+		task := it.Value()
+		ref := task.AllocationRef
+		if tasklist.AssignmentIsScheduled(rp.taskList.Allocation(ref)) {
+			continue
+		}
+		if task.SlotsNeeded <= slotCount {
+			continue
+		}
+		ctx.Tell(ref, sproto.InvalidResourcesRequestError{Cause: err})
+		rp.taskList.RemoveTaskByHandler(ref)
+	}
 }
