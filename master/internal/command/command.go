@@ -333,7 +333,7 @@ func (c *command) Receive(ctx *actor.Context) error {
 			ctx.Log().WithError(err).Errorf(
 				"failure to delete user session for task: %v", c.taskID)
 		}
-	case actor.ChildStopped:
+	case actor.ChildStopped, sproto.InvalidResourcesRequestError:
 	case actor.ChildFailed:
 		if msg.Child.Address().Local() == c.allocationID.String() && c.exitStatus == nil {
 			c.exitStatus = &task.AllocationExited{
@@ -344,6 +344,7 @@ func (c *command) Receive(ctx *actor.Context) error {
 				ctx.Log().WithError(err).Error("marking task complete")
 			}
 		}
+
 	case task.BuildTaskSpec:
 		if ctx.ExpectingResponse() {
 			ctx.Respond(c.ToTaskSpec(c.GenericCommandSpec.Keys))

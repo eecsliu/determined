@@ -142,7 +142,7 @@ func (t *checkpointGCTask) Receive(ctx *actor.Context) error {
 		}
 
 		t.completeTask(ctx)
-	case actor.ChildStopped:
+	case actor.ChildStopped, sproto.InvalidResourcesRequestError:
 	case actor.ChildFailed:
 		if msg.Child.Address().Local() == t.allocationID.String() {
 			t.completeTask(ctx)
