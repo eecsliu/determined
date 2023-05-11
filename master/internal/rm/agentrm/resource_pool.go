@@ -855,10 +855,10 @@ func (rp *resourcePool) pruneTaskList(ctx *actor.Context) {
 	before := rp.taskList.Len()
 	slotCount := rp.provisioner.CurrentSlotCount(ctx)
 	ctx.Log().WithError(err).WithField("slotCount", slotCount).Error("provisioner in error state")
+
 	var refsToRemove = []*actor.Ref{}
 	var groupsToNotify = map[*actor.Ref]bool{}
-	for it := rp.taskList.Iterator(); it.Next(); {
-		task := it.Value()
+	for _, task := range rp.getTaskListReqs() {
 		ref := task.AllocationRef
 		if tasklist.AssignmentIsScheduled(rp.taskList.Allocation(ref)) {
 			ctx.Log().Debugf("task %s already in progress", task.AllocationID)
@@ -866,7 +866,7 @@ func (rp *resourcePool) pruneTaskList(ctx *actor.Context) {
 		}
 		if task.SlotsNeeded <= slotCount {
 			ctx.Log().Debugf("task %s can be scheduled with number of available slots", task.AllocationID)
-			continue
+			break
 		}
 		ctx.Log().WithError(err).Warnf("removing task %s from task list", task.AllocationID)
 		if ref != task.Group {
@@ -883,4 +883,16 @@ func (rp *resourcePool) pruneTaskList(ctx *actor.Context) {
 	}
 	after := rp.taskList.Len()
 	ctx.Log().WithField("before", before).WithField("after", after).Warn("pruned task list")
+}
+
+func (rp *resourcePool) getTaskListReqs() []*sproto.AllocateRequest {
+	if rp.config.Scheduler.Priority != nil {
+		return tasklist.SortTasksWithPosition(rp.taskList, rp.groups, rp.queuePositions, false)
+	}
+
+	var sortedRequests []*sproto.AllocateRequest
+	for it := rp.taskList.Iterator(); it.Next(); {
+		sortedRequests = append(sortedRequests, it.Value())
+	}
+	return sortedRequests
 }
