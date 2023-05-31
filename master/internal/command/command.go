@@ -275,6 +275,11 @@ func (c *command) Receive(ctx *actor.Context) error {
 			}
 		}
 
+		fmt.Println()
+		fmt.Println("STARTING COMMAND IN PRESTART")
+		fmt.Println("SELF:", ctx.Self().Address())
+		fmt.Println("PARENT:", ctx.Self().Parent().Address())
+		fmt.Println()
 		allocation := task.NewAllocation(c.logCtx, sproto.AllocateRequest{
 			AllocationID:      c.allocationID,
 			TaskID:            c.taskID,
