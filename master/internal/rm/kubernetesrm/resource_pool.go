@@ -238,8 +238,11 @@ func (k *kubernetesResourcePool) receiveRequestMsg(ctx *actor.Context) error {
 func (k *kubernetesResourcePool) addTask(ctx *actor.Context, msg sproto.AllocateRequest) {
 	fmt.Println()
 	fmt.Println("INSIDE ADD TASK")
-	fmt.Println("GROUP", msg.Group)
+	fmt.Println("GROUP", msg.Group.Address())
 	fmt.Println()
+	if msg.Group == nil {
+		msg.Group = msg.AllocationRef
+	}
 	actors.NotifyOnStop(ctx, msg.AllocationRef, sproto.ResourcesReleased{
 		AllocationRef: msg.AllocationRef,
 		GroupRef:      msg.Group,
