@@ -615,6 +615,7 @@ func (k *kubernetesResourcePool) resourcesReleased(
 		fmt.Println("are we in here???")
 		fmt.Println("ALLOCATION REF:", msg.AllocationRef.Address())
 		fmt.Println("ALLOCATION REF PARENT?", msg.AllocationRef.Parent().Address())
+		fmt.Println("GROUP REF?", msg.GroupRef.Address())
 		group := k.groups[msg.GroupRef]
 		fmt.Println("GROUP:", group)
 
