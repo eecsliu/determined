@@ -45,7 +45,7 @@ vi.mock('utils/wait', () => ({
   waitPageUrl: () => '',
 }));
 
-vi.mock('components/MonacoEditor', () => ({
+vi.mock('components/kit/CodeEditor', () => ({
   __esModule: true,
   default: () => <></>,
 }));

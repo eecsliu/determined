@@ -480,13 +480,23 @@ node status commands (``squeue``, ``sinfo``, ``pbsnodes``, ``qstat`` ) to discov
 display cluster usage.
 
 When changing this value, ownership of the ``job_storage_root`` directory tree must be updated
-accordingly, and the ``determined-master`` service must be restarted.
+accordingly, and the ``determined-master`` service must be restarted. See ``job_storage_root`` for
+an example command to update the directory tree ownership.
 
 ``group_name``
 --------------
 
 The group that the Launcher will belong to. It should be a group that is not shared with other
 non-privileged users.
+
+``sudo_authorized``
+-------------------
+
+A comma-separated list of user/group specifications identifying users for which the launcher can
+submit/control Slurm/PBS jobs using ``sudo``. This value will be added to the ``sudo`` configuration
+created by the launcher. The default is ``ALL``. The specification ``!root`` is automatically
+appended to this list to prevent privilege elevation. See the ``sudoers(5)`` definition of
+``Runas_List`` for the full syntax of this value. See :ref:`sudo_configuration` for details.
 
 ``singularity_image_root``
 --------------------------
@@ -856,6 +866,18 @@ Min number of Determined agent instances. Defaults to ``0``.
 
 Max number of Determined agent instances. Defaults to ``5``.
 
+``launch_error_timeout``
+------------------------
+
+Duration for which a provisioning error is valid. Tasks that are unschedulable in the existing
+cluster may be canceled. After the timeout period, the error state is reset. Defaults to ``0s``.
+
+``launch_error_retries``
+------------------------
+
+Number of retries to allow before registering a provider provisioning error with
+``launch_error_timeout`` duration. Defaults to ``0``.
+
 ``type: aws``
 -------------
 
@@ -1141,7 +1163,7 @@ those partitions/queues.
 Specifies where model checkpoints will be stored. This can be overridden on a per-experiment basis
 in the :ref:`experiment-configuration`. A checkpoint contains the architecture and weights of the
 model being trained. Determined currently supports several kinds of checkpoint storage, ``gcs``,
-``hdfs``, ``s3``, ``azure``, and ``shared_fs``, identified by the ``type`` subfield.
+``s3``, ``azure``, and ``shared_fs``, identified by the ``type`` subfield.
 
 ``type: gcs``
 =============
@@ -1169,33 +1191,6 @@ The GCS bucket name to use.
 
 The optional path prefix to use. Must not contain ``..``. Note: Prefix is normalized, e.g.,
 ``/pre/.//fix`` -> ``/pre/fix``
-
-``type: hdfs``
-==============
-
-Checkpoints are stored in HDFS using the `WebHDFS
-<http://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/WebHDFS.html>`__ API for
-reading and writing checkpoint resources.
-
-``hdfs_url``
-------------
-
-Hostname or IP address of HDFS namenode, prefixed with protocol, followed by WebHDFS port on
-namenode. Multiple namenodes are allowed as a semicolon-separated list (e.g.,
-``"http://namenode1:50070;http://namenode2:50070"``).
-
-``hdfs_path``
--------------
-
-The prefix path where all checkpoints will be written to and read from. The resources of each
-checkpoint will be saved in a subdirectory of ``hdfs_path``, where the subdirectory name is the
-checkpoint's UUID.
-
-``user``
---------
-
-An optional string value that indicates the user to use for all read and write requests. If left
-unspecified, the default user of the trial runner container will be used.
 
 ``type: s3``
 ============

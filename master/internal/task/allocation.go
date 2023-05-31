@@ -363,6 +363,9 @@ func (a *Allocation) Receive(ctx *actor.Context) error {
 		if err := a.idleTimeoutWatcher.ReceiveMsg(ctx); err != nil {
 			a.Error(ctx, err)
 		}
+	case sproto.InvalidResourcesRequestError:
+		ctx.Tell(a.req.AllocationRef, msg)
+		a.Error(ctx, msg)
 
 	default:
 		a.Error(ctx, actor.ErrUnexpectedMessage(ctx))
@@ -979,9 +982,6 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 		ctx.Log().WithError(err).Error("failed to purge restorable resources")
 	}
 
-	if len(a.resources) == 0 {
-		return
-	}
 	defer a.markResourcesReleased(ctx)
 
 	if a.req.Preemptible {
@@ -1044,6 +1044,8 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 			exit.Err = err
 			return
 		}
+	case len(a.resources) == 0:
+		return
 	default:
 		// If we ever exit without a reason and we have no exited resources, something has gone
 		// wrong.
@@ -1054,9 +1056,15 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 // markResourcesStarted persists start information.
 func (a *Allocation) markResourcesStarted(ctx *actor.Context) {
 	a.model.StartTime = ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond))
-	a.sendTaskLog(ctx, a.enrichLog(model.TaskLog{
-		Log: fmt.Sprintf("%s was recovered on an agent", a.req.Name),
-	}))
+	if a.restored {
+		a.sendTaskLog(ctx, a.enrichLog(model.TaskLog{
+			Log: fmt.Sprintf("%s was recovered on an agent", a.req.Name),
+		}))
+	} else {
+		a.sendTaskLog(ctx, a.enrichLog(model.TaskLog{
+			Log: fmt.Sprintf("%s was assigned to an agent", a.req.Name),
+		}))
+	}
 	if err := a.db.UpdateAllocationStartTime(a.model); err != nil {
 		ctx.Log().
 			WithError(err).
@@ -1066,10 +1074,13 @@ func (a *Allocation) markResourcesStarted(ctx *actor.Context) {
 
 // markResourcesReleased persists completion information.
 func (a *Allocation) markResourcesReleased(ctx *actor.Context) {
-	a.model.EndTime = ptrs.Ptr(time.Now().UTC())
 	if err := a.db.DeleteAllocationSession(a.model.AllocationID); err != nil {
 		ctx.Log().WithError(err).Error("error deleting allocation session")
 	}
+	if a.model.StartTime == nil {
+		return
+	}
+	a.model.EndTime = ptrs.Ptr(time.Now().UTC())
 	if err := a.db.CompleteAllocation(&a.model); err != nil {
 		ctx.Log().WithError(err).Error("failed to mark allocation completed")
 	}

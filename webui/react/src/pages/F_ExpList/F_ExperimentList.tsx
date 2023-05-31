@@ -12,6 +12,7 @@ import { useSettings } from 'hooks/useSettings';
 import { getProjectColumns, searchExperiments } from 'services/api';
 import { V1BulkExperimentFilters } from 'services/api-ts-sdk';
 import usePolling from 'shared/hooks/usePolling';
+import { getCssVar } from 'shared/themes';
 import {
   ExperimentAction,
   ExperimentItem,
@@ -23,6 +24,8 @@ import {
 import handleError from 'utils/error';
 import { Loadable, Loaded, NotLoaded } from 'utils/loadable';
 
+import ComparisonView from './ComparisonView';
+import css from './F_ExperimentList.module.scss';
 import { F_ExperimentListSettings, settingsConfigForProject } from './F_ExperimentList.settings';
 import { Error, Loading, NoExperiments } from './glide-table/exceptions';
 import GlideTable, { SCROLL_SET_COUNT_NEEDED } from './glide-table/GlideTable';
@@ -42,6 +45,7 @@ const formStore = new FilterFormStore();
 export const PAGE_SIZE = 100;
 
 const F_ExperimentList: React.FC<Props> = ({ project }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const settingsConfig = useMemo(() => settingsConfigForProject(project.id), [project.id]);
 
@@ -123,9 +127,7 @@ const F_ExperimentList: React.FC<Props> = ({ project }) => {
   const [canceler] = useState(new AbortController());
 
   const colorMap = useGlasbey(selectedExperimentIds);
-  const pageRef = useRef<HTMLElement>(null);
-  const { width } = useResize(pageRef);
-  const { height: wholePageHeight } = useResize();
+  const { height, width } = useResize(contentRef);
   const [scrollPositionSetCount] = useState(observable(0));
 
   const handleScroll = useCallback(
@@ -211,6 +213,8 @@ const F_ExperimentList: React.FC<Props> = ({ project }) => {
   }, [page, experimentFilters, canceler.signal, filtersString, sortString]);
 
   const { stopPolling } = usePolling(fetchExperiments, { rerunOnNewFn: true });
+
+  const onContextMenuComplete = useCallback(fetchExperiments, [fetchExperiments]);
 
   // TODO: poll?
   useEffect(() => {
@@ -329,6 +333,25 @@ const F_ExperimentList: React.FC<Props> = ({ project }) => {
     };
   }, []);
 
+  const handleToggleComparisonView = useCallback(() => {
+    updateSettings({ compare: !settings.compare });
+  }, [settings.compare, updateSettings]);
+
+  const handleCompareWidthChange = useCallback(
+    (width: number) => {
+      updateSettings({ compareWidth: width });
+    },
+    [updateSettings],
+  );
+
+  const selectedExperiments: ExperimentWithTrial[] = useMemo(() => {
+    if (selectedExperimentIds.length === 0) return [];
+    const selectedIdSet = new Set(selectedExperimentIds);
+    return Loadable.filterNotLoaded(experiments, (experiment) =>
+      selectedIdSet.has(experiment.experiment.id),
+    );
+  }, [experiments, selectedExperimentIds]);
+
   return (
     <>
       <TableActionBar
@@ -346,49 +369,57 @@ const F_ExperimentList: React.FC<Props> = ({ project }) => {
         setIsOpenFilter={onIsOpenFilterChange}
         setVisibleColumns={setVisibleColumns}
         sorts={sorts}
+        toggleComparisonView={handleToggleComparisonView}
         total={total}
         onAction={handleOnAction}
         onSortChange={onSortChange}
       />
-      {isLoading ? (
-        <Loading width={width} />
-      ) : experiments.length === 0 ? (
-        numFilters === 0 ? (
-          <NoExperiments />
+      <div className={css.content} ref={contentRef}>
+        {isLoading ? (
+          <Loading width={width} />
+        ) : experiments.length === 0 ? (
+          numFilters === 0 ? (
+            <NoExperiments />
+          ) : (
+            <Empty description="No results matching your filters" icon="search" />
+          )
+        ) : error ? (
+          <Error />
         ) : (
-          <Empty description="No results matching your filters" icon="search" />
-        )
-      ) : error ? (
-        <Error />
-      ) : (
-        <>
-          <GlideTable
-            clearSelectionTrigger={clearSelectionTrigger}
-            colorMap={colorMap}
-            data={experiments}
-            excludedExperimentIds={excludedExperimentIds}
-            fetchExperiments={fetchExperiments}
-            formStore={formStore}
-            handleScroll={handleScroll}
-            handleUpdateExperimentList={handleUpdateExperimentList}
-            height={wholePageHeight - 150}
-            page={page}
-            project={project}
-            projectColumns={projectColumns}
-            scrollPositionSetCount={scrollPositionSetCount}
-            selectAll={selectAll}
-            selectedExperimentIds={selectedExperimentIds}
-            setExcludedExperimentIds={setExcludedExperimentIds}
-            setSelectAll={setSelectAll}
-            setSelectedExperimentIds={setSelectedExperimentIds}
-            setSortableColumnIds={setVisibleColumns}
-            sortableColumnIds={settings.columns}
-            sorts={sorts}
-            onIsOpenFilterChange={onIsOpenFilterChange}
-            onSortChange={onSortChange}
-          />
-        </>
-      )}
+          <ComparisonView
+            initialWidth={settings.compareWidth}
+            open={settings.compare}
+            selectedExperiments={selectedExperiments}
+            onWidthChange={handleCompareWidthChange}>
+            <GlideTable
+              clearSelectionTrigger={clearSelectionTrigger}
+              colorMap={colorMap}
+              data={experiments}
+              dataTotal={Loadable.getOrElse(0, total)}
+              excludedExperimentIds={excludedExperimentIds}
+              formStore={formStore}
+              handleScroll={handleScroll}
+              handleUpdateExperimentList={handleUpdateExperimentList}
+              height={height - 2 * parseInt(getCssVar('--theme-stroke-width'))}
+              page={page}
+              project={project}
+              projectColumns={projectColumns}
+              scrollPositionSetCount={scrollPositionSetCount}
+              selectAll={selectAll}
+              selectedExperimentIds={selectedExperimentIds}
+              setExcludedExperimentIds={setExcludedExperimentIds}
+              setSelectAll={setSelectAll}
+              setSelectedExperimentIds={setSelectedExperimentIds}
+              setSortableColumnIds={setVisibleColumns}
+              sortableColumnIds={settings.columns}
+              sorts={sorts}
+              onContextMenuComplete={onContextMenuComplete}
+              onIsOpenFilterChange={onIsOpenFilterChange}
+              onSortChange={onSortChange}
+            />
+          </ComparisonView>
+        )}
+      </div>
     </>
   );
 };

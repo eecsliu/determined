@@ -18,7 +18,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 	"github.com/uptrace/bun"
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3" // Can't use ghodss/yaml since NaNs error.
@@ -104,12 +103,13 @@ func addMetrics(ctx context.Context,
 
 func addMetricCustomTime(ctx context.Context, t *testing.T, trialID int, endTime time.Time) {
 	metric := struct {
-		bun.BaseModel `bun:"table:steps"`
+		bun.BaseModel `bun:"table:metrics"`
 		TrialID       int
 		TrialRunID    int
 		Metrics       map[string]any
 		TotalBatches  int
 		EndTime       time.Time
+		PartitionType MetricPartitionType
 	}{
 		TrialID:    trialID,
 		TrialRunID: 1,
@@ -118,19 +118,21 @@ func addMetricCustomTime(ctx context.Context, t *testing.T, trialID int, endTime
 				"b": -1.0,
 			},
 		},
-		TotalBatches: 999999,
-		EndTime:      endTime,
+		TotalBatches:  999999,
+		EndTime:       endTime,
+		PartitionType: TrainingMetric,
 	}
 	_, err := Bun().NewInsert().Model(&metric).Exec(ctx)
 	require.NoError(t, err)
 
 	valMetric := struct {
-		bun.BaseModel `bun:"table:validations"`
+		bun.BaseModel `bun:"table:metrics"`
 		TrialID       int
 		TrialRunID    int
 		Metrics       map[string]any
 		TotalBatches  int
 		EndTime       time.Time
+		PartitionType MetricPartitionType
 	}{
 		TrialID:    trialID,
 		TrialRunID: 1,
@@ -139,8 +141,9 @@ func addMetricCustomTime(ctx context.Context, t *testing.T, trialID int, endTime
 				"val_loss": 3.0,
 			},
 		},
-		TotalBatches: 999999,
-		EndTime:      endTime,
+		TotalBatches:  999999,
+		EndTime:       endTime,
+		PartitionType: ValidationMetric,
 	}
 	_, err = Bun().NewInsert().Model(&valMetric).Exec(ctx)
 	require.NoError(t, err)
@@ -228,6 +231,20 @@ func generateSummaryMetricsTestCases(
 	}
 	expectedNumericValMetrics := map[string]summaryMetrics{
 		"val_loss": {Min: 1.5, Max: 1.5, Sum: 1.5, Count: 1, Last: "1.5", Type: "number"},
+	}
+
+	onlyTrain := RequireMockTrial(t, db, exp).ID
+	addMetrics(ctx, t, db, onlyTrain, `[{"a": "a"}]`, `[]`, archive)
+	expectedOnlyTrainMetrics := map[string]summaryMetrics{
+		"a": {Last: "a", Type: "string"},
+	}
+	expectedOnlyTrainValMetrics := make(map[string]summaryMetrics)
+
+	onlyVal := RequireMockTrial(t, db, exp).ID
+	addMetrics(ctx, t, db, onlyVal, `[]`, `[{"a": "a"}]`, archive)
+	expectedOnlyValMetrics := make(map[string]summaryMetrics)
+	expectedOnlyValValMetrics := map[string]summaryMetrics{
+		"a": {Last: "a", Type: "string"},
 	}
 
 	nonNumericMetrics := RequireMockTrial(t, db, exp).ID
@@ -329,10 +346,21 @@ func generateSummaryMetricsTestCases(
 		"a": {Last: "1.8", Type: "string"},
 	}
 
-	trialIDs := []int{noMetrics, numericMetrics, nonNumericMetrics, infNaNMetrics, types, mixedTypes}
+	trialIDs := []int{
+		noMetrics,
+		numericMetrics,
+		onlyTrain,
+		onlyVal,
+		nonNumericMetrics,
+		infNaNMetrics,
+		types,
+		mixedTypes,
+	}
 	expectedTrain := []map[string]summaryMetrics{
 		expectedNoMetrics,
 		expectedNumericMetrics,
+		expectedOnlyTrainMetrics,
+		expectedOnlyValMetrics,
 		expectedNonNumericMetrics,
 		expectedInfNaNMetrics,
 		expectedTypesMetrics,
@@ -341,6 +369,8 @@ func generateSummaryMetricsTestCases(
 	expectedVal := []map[string]summaryMetrics{
 		expectedNoValMetrics,
 		expectedNumericValMetrics,
+		expectedOnlyTrainValMetrics,
+		expectedOnlyValValMetrics,
 		expectedNonNumericValMetrics,
 		expectedInfNaNValMetrics,
 		expectedTypesValMetrics,
@@ -713,7 +743,7 @@ func TestAddValidationMetricsDupeCheckpoints(t *testing.T) {
 	require.Equal(t, 1.5, checkpoints[1].Training.ValidationMetrics.AvgMetrics.AsMap()["loss"])
 }
 
-func TestBatchesProcessed(t *testing.T) {
+func TestBatchesProcessedNRollbacks(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, etc.SetRootPath(RootFromDB))
 	db := MustResolveTestPostgres(t)
@@ -746,21 +776,10 @@ func TestBatchesProcessed(t *testing.T) {
 	metrics, err := structpb.NewStruct(map[string]any{"loss": 10})
 	require.NoError(t, err)
 
-	type Rollbacks map[string]int
-
-	assertRollbacksMatch := func(expectedRollbacks *Rollbacks, actual Rollbacks) {
-		expected := Rollbacks{
-			"raw_steps":       0,
-			"raw_validations": 0,
-		}
-		if expectedRollbacks != nil {
-			expected = *expectedRollbacks
-		}
-		require.Equal(t, expected, actual)
-	}
+	type Rollbacks int
 
 	testMetricReporting := func(typ string, trialRunId, batches, expectedTotalBatches int,
-		expectedRollbacks *Rollbacks,
+		expectedRollbacks Rollbacks,
 	) error {
 		require.NoError(t, db.UpdateTrialRunID(tr.ID, trialRunId))
 		trialMetrics := &trialv1.TrialMetrics{
@@ -769,17 +788,16 @@ func TestBatchesProcessed(t *testing.T) {
 			StepsCompleted: int32(batches),
 			Metrics:        &commonv1.Metrics{AvgMetrics: metrics},
 		}
+		t.Logf("Adding %s metrics: %v", typ, trialMetrics)
 		switch typ {
-		case "training":
-			// require.NoError(t, db.AddTrainingMetrics(ctx, trialMetrics))
-			rollbacksCnts, err := db.addTrialMetrics(ctx, trialMetrics, false)
+		case model.TrainingMetricType.ToString():
+			rollbacksCnts, err := db.addTrialMetrics(ctx, trialMetrics, TrainingMetric, nil)
 			require.NoError(t, err)
-			assertRollbacksMatch(expectedRollbacks, rollbacksCnts)
-		case "validation":
-			// require.NoError(t, db.AddValidationMetrics(ctx, trialMetrics))
-			rollbacksCnts, err := db.addTrialMetrics(ctx, trialMetrics, true)
+			require.Equal(t, int(expectedRollbacks), rollbacksCnts)
+		case model.ValidationMetricType.ToString():
+			rollbacksCnts, err := db.addTrialMetrics(ctx, trialMetrics, ValidationMetric, nil)
 			require.NoError(t, err)
-			assertRollbacksMatch(expectedRollbacks, rollbacksCnts)
+			require.Equal(t, int(expectedRollbacks), rollbacksCnts)
 		case "checkpoint":
 			require.NoError(t, AddCheckpointMetadata(ctx, &model.CheckpointV2{
 				UUID:         uuid.New(),
@@ -789,9 +807,10 @@ func TestBatchesProcessed(t *testing.T) {
 				State:        model.CompletedState,
 				Metadata:     map[string]any{"steps_completed": batches},
 			}))
-
 		default:
-			return errors.Errorf("unknown type %s", typ)
+			rollbacksCnts, err := db.addTrialMetrics(ctx, trialMetrics, GenericMetric, &typ)
+			require.NoError(t, err)
+			require.Equal(t, int(expectedRollbacks), rollbacksCnts)
 		}
 
 		dbTr, err = db.TrialByID(tr.ID)
@@ -805,31 +824,30 @@ func TestBatchesProcessed(t *testing.T) {
 		trialRunID      int
 		batches         int
 		expectedBatches int // expected reported total batches processed.
-		rollbacks       *Rollbacks
+		rollbacks       Rollbacks
 	}{ // order matters.
-		{"training", 0, 10, 10, nil},
-		{"validation", 0, 10, 10, nil},
-		{"training", 0, 20, 20, nil},
-		{"validation", 0, 20, 20, nil},
-		{"validation", 0, 30, 30, nil}, // will be rolled back.
-		{"training", 0, 25, 30, nil},
-		{"validation", 1, 25, 25, &Rollbacks{
-			"raw_validations": 1,
-			"raw_steps":       0,
-		}}, // triggers rollback via validations.
-		{"validation", 1, 30, 30, nil}, // will be rolled back.
-		{"training", 1, 30, 30, nil},   // will be rolled back.
-		{"training", 2, 27, 27, &Rollbacks{
-			"raw_validations": 1,
-			"raw_steps":       1,
-		}}, // triggers rollback via training.
-		{"checkpoint", 2, 30, 27, nil}, // we do NOT account for steps_completed here.
-		{"checkpoint", 3, 25, 27, nil}, // do NOT account for steps_completed here.
+		{"training", 0, 10, 10, 0},
+		{"validation", 0, 10, 10, 0},
+		{"training", 0, 20, 20, 0},
+		{"validation", 0, 20, 20, 0},
+		{"validation", 0, 30, 30, 0}, // will be rolled back.
+		{"training", 0, 25, 30, 0},
+		{"validation", 1, 25, 25, 1}, // triggers rollback via validations.
+		{"validation", 1, 30, 30, 0}, // will be rolled back.
+		{"training", 1, 30, 30, 0},   // will be rolled back.
+		{"training", 2, 27, 27, 2},   // triggers rollback via training.
+		{"checkpoint", 2, 30, 27, 0}, // we do NOT account for steps_completed here.
+		{"checkpoint", 3, 25, 27, 0}, // do NOT account for steps_completed here.
+		{"validation", 3, 27, 27, 0},
+		{"generic-golabi", 3, 27, 27, 0},
+		{"generic-golabi", 3, 29, 29, 0}, // will get rolled back.
+		{"inference", 3, 28, 29, 0},      // will get rolled back.
+		{"inference", 4, 28, 28, 2},
 	}
 	for _, c := range cases {
 		require.NoError(t, testMetricReporting(
 			c.typ, c.trialRunID, c.batches, c.expectedBatches, c.rollbacks,
-		))
+		), c)
 	}
 
 	// check rollbacks happened as expected.
@@ -842,6 +860,64 @@ func TestBatchesProcessed(t *testing.T) {
 		Where("trial_id = ?", tr.ID).Where("archived = true").Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, archivedValidations, "trial id %d", tr.ID)
+
+	returnedMetrics, err := GetMetrics(ctx, tr.ID, 0, 10, "generic-golabi")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(returnedMetrics))
+}
+
+func TestGenericMetricsIO(t *testing.T) {
+	ctx := context.Background()
+	require.NoError(t, etc.SetRootPath(RootFromDB))
+	db := MustResolveTestPostgres(t)
+	MustMigrateTestPostgres(t, db, MigrationsFromDB)
+	exp, activeConfig := model.ExperimentModel()
+	require.NoError(t, db.AddExperiment(exp, activeConfig))
+	task := RequireMockTask(t, db, exp.OwnerID)
+	tr := model.Trial{
+		TaskID:       task.TaskID,
+		JobID:        exp.JobID,
+		ExperimentID: exp.ID,
+		State:        model.ActiveState,
+		StartTime:    time.Now(),
+	}
+	require.NoError(t, db.AddTrial(&tr))
+
+	dbTr, err := db.TrialByID(tr.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0, dbTr.TotalBatches)
+
+	a := &model.Allocation{
+		AllocationID: model.AllocationID(fmt.Sprintf("%s-%d", tr.TaskID, 0)),
+		TaskID:       tr.TaskID,
+		StartTime:    ptrs.Ptr(time.Now()),
+	}
+	err = db.AddAllocation(a)
+	require.NoError(t, err, "failed to add allocation")
+
+	metrics, err := structpb.NewStruct(map[string]any{"loss": 10})
+	require.NoError(t, err)
+
+	trialRunID := 1
+	batches := 10
+	require.NoError(t, db.UpdateTrialRunID(tr.ID, trialRunID))
+	trialMetrics := &trialv1.TrialMetrics{
+		TrialId:        int32(tr.ID),
+		TrialRunId:     int32(trialRunID),
+		StepsCompleted: int32(batches),
+		Metrics:        &commonv1.Metrics{AvgMetrics: metrics},
+	}
+
+	err = db.AddTrialMetrics(ctx, trialMetrics, "inference")
+	require.NoError(t, err)
+
+	metricReports, err := GetMetrics(ctx, tr.ID, batches-1, 10, "inference")
+	require.NoError(t, err)
+	require.Len(t, metricReports, 1)
+	require.EqualValues(t, trialRunID, metricReports[0].TrialRunId)
+	require.EqualValues(t, batches, metricReports[0].TotalBatches)
+	require.EqualValues(t, tr.ID, metricReports[0].TrialId)
+	require.Equal(t, metrics, metricReports[0].Metrics.Fields["avg_metrics"].GetStructValue())
 }
 
 func TestConcurrentMetricUpdate(t *testing.T) {
@@ -849,7 +925,8 @@ func TestConcurrentMetricUpdate(t *testing.T) {
 	require.NoError(t, etc.SetRootPath(RootFromDB))
 	db := MustResolveTestPostgres(t)
 	MustMigrateTestPostgres(t, db, MigrationsFromDB)
-
+	exp, activeConfig := model.ExperimentModel()
+	require.NoError(t, db.AddExperiment(exp, activeConfig))
 	createTrial := func() *model.Trial {
 		exp, activeConfig := model.ExperimentModel()
 		require.NoError(t, db.AddExperiment(exp, activeConfig))
@@ -897,7 +974,10 @@ func TestConcurrentMetricUpdate(t *testing.T) {
 			require.NoError(t, db.updateTotalBatches(ctx, tx, tr.ID))
 		}
 		if coinFlip() {
-			_, err = db._addTrialMetricsTx(ctx, tx, trialMetrics, coinFlip())
+			partitionTypes := []MetricPartitionType{ValidationMetric, TrainingMetric}
+			//nolint:gosec // Weak RNG doesn't matter here.
+			partitionType := partitionTypes[rand.Intn(len(partitionTypes))]
+			_, err = db._addTrialMetricsTx(ctx, tx, trialMetrics, partitionType, nil)
 			require.NoError(t, err)
 		}
 		if coinFlip() {

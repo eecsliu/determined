@@ -383,6 +383,7 @@ const checkpointStateMap = {
   [Sdk.Checkpointv1State.COMPLETED]: types.CheckpointState.Completed,
   [Sdk.Checkpointv1State.ERROR]: types.CheckpointState.Error,
   [Sdk.Checkpointv1State.DELETED]: types.CheckpointState.Deleted,
+  [Sdk.Checkpointv1State.PARTIALLYDELETED]: types.CheckpointState.PartiallyDeleted,
 };
 
 const experimentStateMap = {
@@ -484,6 +485,7 @@ export const mapV1Experiment = (
     config: ioToExperimentConfig(ioConfig),
     configRaw: data.config,
     description: data.description,
+    duration: data.duration,
     endTime: data.endTime as unknown as string,
     forkedFrom: data.forkedFrom,
     hyperparameters,

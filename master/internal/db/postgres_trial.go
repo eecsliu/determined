@@ -163,9 +163,39 @@ WHERE id = $1`, id, restartCount); err != nil {
 func (db *PgDB) fullTrialSummaryMetricsRecompute(
 	ctx context.Context, tx *sqlx.Tx, trialID int,
 ) error {
-	_, err := tx.ExecContext(ctx, `
+	trainSummary, err := db.calculateFullTrialSummaryMetrics(
+		ctx, tx, trialID, "avg_metrics", TrainingMetric)
+	if err != nil {
+		return fmt.Errorf("rollback computing training summary metrics: %w", err)
+	}
+	valSummary, err := db.calculateFullTrialSummaryMetrics(
+		ctx, tx, trialID, "validation_metrics", ValidationMetric)
+	if err != nil {
+		return fmt.Errorf("rollback computing validation summary metrics: %w", err)
+	}
+
+	updatedSummaryMetrics := model.JSONObj{}
+	if len(trainSummary) > 0 {
+		updatedSummaryMetrics["avg_metrics"] = trainSummary
+	}
+	if len(valSummary) > 0 {
+		updatedSummaryMetrics["validation_metrics"] = valSummary
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE trials SET summary_metrics = $1,
+	summary_metrics_timestamp = NOW() WHERE id = $2`, updatedSummaryMetrics, trialID); err != nil {
+		return fmt.Errorf("rollback updating trial summary metrics: %w", err)
+	}
+	return nil
+}
+
+func (db *PgDB) calculateFullTrialSummaryMetrics(
+	ctx context.Context, tx *sqlx.Tx, trialID int, jsonPath string, partition MetricPartitionType,
+) (model.JSONObj, error) {
+	//nolint: execinquery
+	rows, err := tx.QueryContext(ctx, `
 -- Returns pairs of metric names and trial_ids and if they are numeric or not.
-WITH training_trial_metrics as (
+WITH trial_metrics as (
 SELECT
 	name,
 	trial_id,
@@ -183,27 +213,27 @@ FROM (
 	SELECT
 	name,
 	CASE
-		WHEN jsonb_typeof(metrics->'avg_metrics'->name) = 'string' THEN
+		WHEN jsonb_typeof(metrics->$2->name) = 'string' THEN
 			CASE
-				WHEN (metrics->'avg_metrics'->name)::text = '"Infinity"'::text THEN 'number'
-				WHEN (metrics->'avg_metrics'->name)::text = '"-Infinity"'::text THEN 'number'
-				WHEN (metrics->'avg_metrics'->name)::text = '"NaN"'::text THEN 'number'
-				WHEN metrics->'avg_metrics'->>name ~
+				WHEN (metrics->$2->name)::text = '"Infinity"'::text THEN 'number'
+				WHEN (metrics->$2->name)::text = '"-Infinity"'::text THEN 'number'
+				WHEN (metrics->$2->name)::text = '"NaN"'::text THEN 'number'
+				WHEN metrics->$2->>name ~
 					'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$' THEN 'date'
 				ELSE 'string'
 			END
-		ELSE jsonb_typeof(metrics->'avg_metrics'->name)
+		ELSE jsonb_typeof(metrics->$2->name)
 	END as metric_type,
 	trial_id,
 	count(1) as entries
 	FROM (
 		SELECT DISTINCT
-		jsonb_object_keys(s.metrics->'avg_metrics') as name
-		FROM steps s
-		WHERE s.trial_id = $1
-	) names, steps
+		jsonb_object_keys(s.metrics->$2) as name
+		FROM metrics s
+		WHERE s.trial_id = $1 AND partition_type = $3 AND not archived
+	) names, metrics
 	JOIN trials ON trial_id = trials.id
-	WHERE trials.id = $1
+	WHERE trials.id = $1 AND metrics.partition_type = $3 AND not metrics.archived
 	GROUP BY name, metric_type, trial_id
 ) typed
 where metric_type IS NOT NULL
@@ -211,25 +241,25 @@ GROUP BY name, trial_id
 ORDER BY trial_id, name
 ),
 -- Filters to only numeric metrics.
-training_numeric_trial_metrics as (
+numeric_trial_metrics as (
 SELECT name, trial_id
-FROM training_trial_metrics
+FROM trial_metrics
 WHERE metric_type = 'number'
 ),
 -- Calculates count, sum, min, max on each numeric metric name and trial ID pair.
 -- Also adds just the name for non numeric metrics to ensure we record every metric.
-training_trial_metric_aggs as (
+trial_metric_aggs as (
 SELECT
 	name,
 	ntm.trial_id,
 	count(1) as count_agg,
-	sum((steps.metrics->'avg_metrics'->>name)::double precision) as sum_agg,
-	min((steps.metrics->'avg_metrics'->>name)::double precision) as min_agg,
-	max((steps.metrics->'avg_metrics'->>name)::double precision) as max_agg,
+	sum((metrics.metrics->$2->>name)::double precision) as sum_agg,
+	min((metrics.metrics->$2->>name)::double precision) as min_agg,
+	max((metrics.metrics->$2->>name)::double precision) as max_agg,
 	'number' as metric_type
-FROM training_numeric_trial_metrics ntm INNER JOIN steps
-ON steps.trial_id=ntm.trial_id
-WHERE steps.metrics->'avg_metrics'->name IS NOT NULL
+FROM numeric_trial_metrics ntm INNER JOIN metrics
+ON metrics.trial_id=ntm.trial_id
+WHERE metrics.metrics->$2->name IS NOT NULL AND metrics.partition_type = $3 AND not metrics.archived
 GROUP BY 1, 2
 UNION
 SELECT
@@ -240,13 +270,13 @@ SELECT
 	NULL as min,
 	NULL as max,
 	metric_type as metric_type
-FROM training_trial_metrics
+FROM trial_metrics
 WHERE metric_type != 'number'
 ),
 -- Gets the last reported metric for each trial. Note if we report
 -- {"a": 1} and {"b": 1} we consider {"b": 1} to be the last reported
 -- metric and "a"'s last will be NULL.
-latest_training as (
+latest_metrics as (
   SELECT s.trial_id,
 	unpacked.key as name,
 	unpacked.value as latest_value
@@ -256,14 +286,14 @@ latest_training as (
 		  PARTITION BY s.trial_id
 		  ORDER BY s.end_time DESC
 		) as rank
-	  FROM steps s
+	  FROM metrics s
 	  JOIN trials ON s.trial_id = trials.id
-	  WHERE s.trial_id = $1
-	) s, jsonb_each(s.metrics->'avg_metrics') unpacked
+	  WHERE s.trial_id = $1 AND partition_type = $3 AND not archived
+	) s, jsonb_each(s.metrics->$2) unpacked
   WHERE s.rank = 1
 ),
--- Adds the last reported metric to training the aggregation.
-training_combined_latest_agg as (SELECT
+-- Adds the last reported metric to the aggregation.
+combined_latest_agg as (SELECT
 	coalesce(lt.trial_id, tma.trial_id) as trial_id,
 	coalesce(lt.name, tma.name) as name,
 	tma.count_agg,
@@ -272,178 +302,38 @@ training_combined_latest_agg as (SELECT
 	tma.max_agg,
 	lt.latest_value,
 	tma.metric_type
-FROM latest_training lt FULL OUTER JOIN training_trial_metric_aggs tma ON
+FROM latest_metrics lt FULL OUTER JOIN trial_metric_aggs tma ON
 	lt.trial_id = tma.trial_id AND lt.name = tma.name
-),
--- Turns each rows into a JSONB object.
-training_trial_metrics_final as (
-	SELECT
-		trial_id, jsonb_collect(jsonb_build_object(
-			name, jsonb_build_object(
-				'count', count_agg,
-				'sum', sum_agg,
-				'min', CASE WHEN max_agg = 'NaN'::double precision THEN 'NaN'::double precision
-					ELSE min_agg END,
-				'max', max_agg,
-				'last', latest_value,
-				'type', metric_type
-			)
-		)) as training_metrics
-	FROM training_combined_latest_agg
-	GROUP BY trial_id
-),
--- We repeat the same process as above to validation metrics.
-validation_trial_metrics as (
-SELECT
-	name,
-	trial_id,
-	CASE sum(entries)
-		WHEN sum(entries) FILTER (WHERE metric_type = 'number') THEN 'number'
-		WHEN sum(entries) FILTER (WHERE metric_type = 'string') THEN 'string'
-		WHEN sum(entries) FILTER (WHERE metric_type = 'date') THEN 'date'
-		WHEN sum(entries) FILTER (WHERE metric_type = 'object') THEN 'object'
-		WHEN sum(entries) FILTER (WHERE metric_type = 'boolean') THEN 'boolean'
-		WHEN sum(entries) FILTER (WHERE metric_type = 'array') THEN 'array'
-		WHEN sum(entries) FILTER (WHERE metric_type = 'null') THEN 'null'
-		ELSE 'string'
-	END as metric_type
-FROM (
-	SELECT
-	name,
-	CASE
-		WHEN jsonb_typeof(metrics->'validation_metrics'->name) = 'string' THEN
-			CASE
-				WHEN (metrics->'validation_metrics'->name)::text = '"Infinity"'::text THEN 'number'
-				WHEN (metrics->'validation_metrics'->name)::text = '"-Infinity"'::text THEN 'number'
-				WHEN (metrics->'validation_metrics'->name)::text = '"NaN"'::text THEN 'number'
-				WHEN metrics->'validation_metrics'->>name ~
-					'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$' THEN 'date'
-				ELSE 'string'
-			END
-		ELSE jsonb_typeof(metrics->'validation_metrics'->name)
-	END as metric_type,
-	trial_id,
-	count(1) as entries
-	FROM (
-		SELECT DISTINCT
-		jsonb_object_keys(s.metrics->'validation_metrics') as name
-		FROM validations s
-		JOIN trials ON s.trial_id = trials.id
-		WHERE s.trial_id = $1
-	) names, validations
-	JOIN trials ON trial_id = trials.id
-	WHERE trials.id = $1
-	GROUP BY name, metric_type, trial_id
-) typed
-where metric_type is not NULL
-GROUP BY name, trial_id
-ORDER BY trial_id, name
-),
-validation_numeric_trial_metrics as (
-SELECT name, trial_id
-FROM validation_trial_metrics
-WHERE metric_type = 'number'
-),
-validation_trial_metric_aggs as (
-SELECT
-	name,
-	ntm.trial_id,
-	count(1) as count_agg,
-	sum((validations.metrics->'validation_metrics'->>name)::double precision) as sum_agg,
-	min((validations.metrics->'validation_metrics'->>name)::double precision) as min_agg,
-	max((validations.metrics->'validation_metrics'->>name)::double precision) as max_agg,
-	'number' as metric_type
-FROM validation_numeric_trial_metrics ntm INNER JOIN validations
-ON validations.trial_id=ntm.trial_id
-WHERE validations.metrics->'validation_metrics'->name IS NOT NULL
-GROUP BY 1, 2
-UNION
-SELECT
-	name,
-	trial_id,
-	NULL as count_agg,
-	NULL as sum,
-	NULL as min,
-	NULL as max,
-	metric_type as metric_type
-FROM validation_trial_metrics
-WHERE metric_type != 'number'
-),
-latest_validation as (
-	SELECT s.trial_id,
-		unpacked.key as name,
-		unpacked.value as latest_value
-	FROM (
-		SELECT s.*,
-			ROW_NUMBER() OVER(
-				PARTITION BY s.trial_id
-				ORDER BY s.end_time DESC
-			) as rank
-		FROM validations s
-		JOIN trials ON s.trial_id = trials.id
-		WHERE s.trial_id = $1
-	) s, jsonb_each(s.metrics->'validation_metrics') unpacked
-	WHERE s.rank = 1
-),
-validation_combined_latest_agg as (SELECT
-	coalesce(lt.trial_id, tma.trial_id) as trial_id,
-	coalesce(lt.name, tma.name) as name,
-	tma.count_agg,
-	tma.sum_agg,
-	tma.min_agg,
-	tma.max_agg,
-	lt.latest_value,
-	tma.metric_type
-FROM latest_validation lt FULL OUTER JOIN validation_trial_metric_aggs tma ON
-	lt.trial_id = tma.trial_id AND lt.name = tma.name
-),
-validation_trial_metrics_final as (
-	SELECT
-		trial_id, jsonb_collect(jsonb_build_object(
-			name, jsonb_build_object(
-				'count', count_agg,
-				'sum', sum_agg,
-				'min', CASE WHEN max_agg = 'NaN'::double precision THEN 'NaN'::double precision
-					ELSE min_agg END,
-				'max', max_agg,
-				'last', latest_value,
-				'type', metric_type
-			)
-		)) as validation_metrics
-	FROM validation_combined_latest_agg
-	GROUP BY trial_id
-),
--- Combine both training and validation metrics into a single JSON object.
-validation_training_combined_json as (
-	SELECT
-	coalesce(ttm.trial_id, vtm.trial_id) as trial_id,
-	(CASE
-		WHEN ttm.training_metrics IS NOT NULL AND vtm.validation_metrics IS NOT NULL THEN
-			jsonb_build_object(
-				'avg_metrics', ttm.training_metrics,
-				'validation_metrics', vtm.validation_metrics
-			)
-		WHEN ttm.training_metrics IS NOT NULL THEN
-			jsonb_build_object(
-				'avg_metrics', ttm.training_metrics
-			)
-		WHEN vtm.validation_metrics IS NOT NULL THEN jsonb_build_object(
-				'validation_metrics', vtm.validation_metrics
-		   )
-		ELSE '{}'::jsonb END) as summary_metrics
-	FROM training_trial_metrics_final ttm FULL OUTER JOIN validation_trial_metrics_final vtm
-	ON ttm.trial_id = vtm.trial_id
-)
--- Updates trials with this training and validation object.
-UPDATE trials SET
-	summary_metrics = vtcj.summary_metrics, summary_metrics_timestamp = NOW()
-FROM validation_training_combined_json vtcj WHERE vtcj.trial_id = trials.id;
-`, trialID)
+) SELECT name, jsonb_build_object(
+    'count', count_agg,
+    'sum', sum_agg,
+    'min', CASE WHEN max_agg = 'NaN'::double precision
+        THEN 'NaN'::double precision ELSE min_agg END,
+    'max', max_agg,
+    'last', latest_value,
+    'type', metric_type
+) FROM combined_latest_agg;
+`, trialID, jsonPath, partition)
 	if err != nil {
-		return errors.Wrapf(err, "updating trial %d summary metrics", trialID)
+		return nil, errors.Wrapf(err, "getting full compute trial %d summary metrics", trialID)
 	}
 
-	return nil
+	metrics := model.JSONObj{}
+	defer rows.Close()
+	for rows.Next() {
+		var metric model.JSONObj
+		var name string
+		if err = rows.Scan(&name, &metric); err != nil {
+			return nil, fmt.Errorf("scanning summary metric row: %w", err)
+		}
+		metrics[name] = metric
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows err summary metric full compute: %w", err)
+	}
+
+	return metrics, nil
 }
 
 // updateLatestValidationID updates latest validation based on validations table.
@@ -468,20 +358,14 @@ func (db *PgDB) updateLatestValidationID(ctx context.Context, tx *sqlx.Tx, trial
 // updateTotalBatches update precomputed total_batches based on existing steps and validations.
 func (db *PgDB) updateTotalBatches(ctx context.Context, tx *sqlx.Tx, trialID int) error {
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE trials SET total_batches = sub.new_max_total_batches_processed
+		UPDATE trials t
+		SET total_batches = COALESCE(latest.total_batches_processed, 0)
 		FROM (
-			SELECT max(q.total_batches) AS new_max_total_batches_processed
-			FROM (
-				SELECT coalesce(max(s.total_batches), 0) AS total_batches
-				FROM steps s
-				WHERE s.trial_id = $1
-				UNION ALL
-				SELECT coalesce(max(v.total_batches), 0) AS total_batches
-				FROM validations v
-				WHERE v.trial_id = $1
-			) q
-		) AS sub
-		WHERE id = $1;
+				SELECT max(m.total_batches) AS total_batches_processed
+				FROM metrics m
+				WHERE m.trial_id = $1 AND m.archived = false
+			) AS latest
+		WHERE t.id = $1
 		`, trialID); err != nil {
 		return errors.Wrap(err, "error computing total_batches")
 	}
@@ -489,172 +373,127 @@ func (db *PgDB) updateTotalBatches(ctx context.Context, tx *sqlx.Tx, trialID int
 }
 
 func (db *PgDB) _addTrialMetricsTx(
-	ctx context.Context, tx *sqlx.Tx, m *trialv1.TrialMetrics, isValidation bool,
-) (rollbacks map[string]int, err error) {
-	rollbacks = make(map[string]int)
-	trialMetricTables := []string{"raw_steps", "raw_validations"}
-	targetTable := "raw_steps"
+	ctx context.Context, tx *sqlx.Tx, m *trialv1.TrialMetrics, pType MetricPartitionType,
+	mType *string,
+) (rollbacks int, err error) {
+	isValidation := pType == ValidationMetric
+
 	metricsJSONPath := "avg_metrics"
 	metricsBody := map[string]interface{}{
-		"avg_metrics":   m.Metrics.AvgMetrics,
+		metricsJSONPath: m.Metrics.AvgMetrics,
 		"batch_metrics": m.Metrics.BatchMetrics,
 	}
 	if isValidation {
 		metricsJSONPath = "validation_metrics"
-		targetTable = "raw_validations"
 		metricsBody = map[string]interface{}{
-			"validation_metrics": m.Metrics.AvgMetrics,
+			metricsJSONPath: m.Metrics.AvgMetrics,
 		}
 	}
 
-	// TODO(hamid): deindent. this is here to reduce merge conflicts.
-	run := func(tx *sqlx.Tx) error {
-		if err := checkTrialRunID(ctx, tx, m.TrialId, m.TrialRunId); err != nil {
-			return err
-		}
+	if err := checkTrialRunID(ctx, tx, m.TrialId, m.TrialRunId); err != nil {
+		return rollbacks, err
+	}
 
-		rollbackHappened := false
-		for _, table := range trialMetricTables {
-			comparator := ">"
-			if table == targetTable {
-				// we mark metrics reported in the same table with the same batch number
-				// as the metric being added as `archived`.
-				comparator = ">="
-			}
-			res, err := tx.ExecContext(ctx, fmt.Sprintf(`
-UPDATE %s SET archived = true
-WHERE trial_id = $1
-  AND archived = false
-  AND trial_run_id < $2
-  AND total_batches %s $3;
-	`, table, comparator), m.TrialId, m.TrialRunId, m.StepsCompleted)
-			if err != nil {
-				return errors.Wrap(err, "archiving metrics")
-			}
-			affectedRows, err := res.RowsAffected()
-			if err != nil {
-				return errors.Wrap(err, "checking for metric rollbacks")
-			}
-			rollbacks[table] = int(affectedRows)
-			if affectedRows > 0 {
-				rollbackHappened = true
-			}
-		}
-
-		var summaryMetrics model.JSONObj
-		err := tx.QueryRowContext(ctx, `
+	if rollbacks, err = rollbackMetrics(ctx, tx, m.TrialRunId, m.TrialId, m.StepsCompleted,
+		pType); err != nil {
+		return rollbacks, err
+	}
+	var summaryMetrics model.JSONObj
+	err = tx.QueryRowContext(ctx, `
 		SELECT summary_metrics FROM trials WHERE id = $1 FOR UPDATE;
 	`, m.TrialId).Scan(&summaryMetrics)
-		if err != nil {
-			return fmt.Errorf("error getting summary metrics from trials: %w", err)
+	if err != nil {
+		return rollbacks, fmt.Errorf("error getting summary metrics from trials: %w", err)
+	}
+
+	metricRowID, err := db.addRawMetrics(ctx, tx, &metricsBody, m.TrialRunId,
+		m.TrialId, m.StepsCompleted, pType, mType)
+	if err != nil {
+		return rollbacks, err
+	}
+
+	switch {
+	case rollbacks != 0:
+		if err := db.updateTotalBatches(ctx, tx, int(m.TrialId)); err != nil {
+			return rollbacks, errors.Wrap(err, "rollback")
 		}
 
-		var metricRowID int
-		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-INSERT INTO %s
-	(trial_id, trial_run_id, end_time, metrics, total_batches)
-VALUES
-	($1, $2, now(), $3, $4)
-RETURNING id
-`, targetTable),
-			int(m.TrialId), int(m.TrialRunId), metricsBody, int(m.StepsCompleted),
-		).Scan(&metricRowID); err != nil {
-			return errors.Wrap(err, fmt.Sprintf("inserting metrics into %s", targetTable))
+		if err := db.updateLatestValidationID(ctx, tx, int(m.TrialId)); err != nil {
+			return rollbacks, fmt.Errorf(
+				"rollback updating latest validation ID for trial %d: %w", m.TrialId, err)
 		}
 
-		if rollbackHappened {
-			if err := db.updateTotalBatches(ctx, tx, int(m.TrialId)); err != nil {
-				return errors.Wrap(err, "rollback")
-			}
+		if err := db.fullTrialSummaryMetricsRecompute(ctx, tx, int(m.TrialId)); err != nil {
+			return rollbacks, errors.Wrap(err, "error on rollback compute of summary metrics")
+		}
+	case pType == GenericMetric:
+		if _, err := tx.ExecContext(ctx, `
+	UPDATE trials SET total_batches = GREATEST(total_batches, $2)
+	WHERE id = $1;
+	`, m.TrialId, m.StepsCompleted); err != nil {
+			return rollbacks, errors.Wrap(err, "updating trial total batches")
+		}
+	default: // no rollbacks happened.
+		if _, ok := summaryMetrics[metricsJSONPath]; !ok {
+			summaryMetrics[metricsJSONPath] = map[string]any{}
+		}
+		summaryMetrics[metricsJSONPath] = calculateNewSummaryMetrics(
+			summaryMetrics[metricsJSONPath].(map[string]any),
+			m.Metrics.AvgMetrics,
+		)
 
-			if err := db.updateLatestValidationID(ctx, tx, int(m.TrialId)); err != nil {
-				return fmt.Errorf(
-					"rollback updating latest validation ID for trial %d: %w", m.TrialId, err)
-			}
-
-			if err := db.fullTrialSummaryMetricsRecompute(ctx, tx, int(m.TrialId)); err != nil {
-				return errors.Wrap(err, "error on rollback compute of summary metrics")
-			}
-		} else {
-			if _, ok := summaryMetrics[metricsJSONPath]; !ok {
-				summaryMetrics[metricsJSONPath] = map[string]any{}
-			}
-			summaryMetrics[metricsJSONPath] = calculateNewSummaryMetrics(
-				summaryMetrics[metricsJSONPath].(map[string]any),
-				m.Metrics.AvgMetrics,
-			)
-
-			var latestValidationID *int
-			if isValidation {
-				var searcherMetric *string
-				if err := tx.QueryRowContext(ctx, `
+		var latestValidationID *int
+		if isValidation {
+			var searcherMetric *string
+			if err := tx.QueryRowContext(ctx, `
 		SELECT experiments.config->'searcher'->>'metric' AS metric_name
 		FROM experiments
 		JOIN trials t ON t.experiment_id = experiments.id
 		WHERE t.id = $1`, int(m.TrialId)).Scan(&searcherMetric); err != nil {
-					return fmt.Errorf("getting trial's searcher metric: %w", err)
-				}
-				if searcherMetric != nil &&
-					m.Metrics.AvgMetrics.Fields[*searcherMetric].AsInterface() != nil {
-					latestValidationID = &metricRowID
-				}
+				return rollbacks, fmt.Errorf("getting trial's searcher metric: %w", err)
 			}
+			if searcherMetric != nil &&
+				m.Metrics.AvgMetrics.Fields[*searcherMetric].AsInterface() != nil {
+				latestValidationID = &metricRowID
+			}
+		}
 
-			if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 UPDATE trials SET total_batches = GREATEST(total_batches, $2),
 summary_metrics = $3, summary_metrics_timestamp = NOW(),
 latest_validation_id = coalesce($4, latest_validation_id)
 WHERE id = $1;
 `, m.TrialId, m.StepsCompleted, summaryMetrics, latestValidationID); err != nil {
-				return errors.Wrap(err, "updating trial total batches")
-			}
+			return rollbacks, errors.Wrap(err, "updating trial total batches")
 		}
-
-		if isValidation {
-			if err := setTrialBestValidation(
-				tx, int(m.TrialId),
-				int(m.TrialRunId),
-				int(m.StepsCompleted)); err != nil {
-				return errors.Wrap(err, "updating trial best validation")
-			}
-		}
-		return nil
 	}
 
-	return rollbacks, run(tx)
+	if isValidation {
+		if err := setTrialBestValidation(
+			tx, int(m.TrialId),
+			int(m.TrialRunId),
+			int(m.StepsCompleted)); err != nil {
+			return rollbacks, errors.Wrap(err, "updating trial best validation")
+		}
+	}
+	return rollbacks, nil
 }
 
 // addTrialMetrics inserts a set of trial metrics to the database.
 func (db *PgDB) addTrialMetrics(
-	ctx context.Context, m *trialv1.TrialMetrics, isValidation bool,
-) (rollbacks map[string]int, err error) {
+	ctx context.Context, m *trialv1.TrialMetrics, pType MetricPartitionType,
+	mType *string,
+) (rollbacks int, err error) {
 	switch v := m.Metrics.AvgMetrics.Fields["epoch"].AsInterface().(type) {
 	case float64, nil:
 	default:
-		return nil, fmt.Errorf("cannot add metric with non numeric 'epoch' value got %v", v)
+		return 0, fmt.Errorf("cannot add metric with non numeric 'epoch' value got %v", v)
 	}
-	return rollbacks, db.withTransaction("add training metrics", func(tx *sqlx.Tx) error {
-		rollbacks, err = db._addTrialMetricsTx(ctx, tx, m, isValidation)
-		return err
-	})
-}
-
-// AddTrainingMetrics adds a completed step to the database with the given training metrics.
-// If these training metrics occur before any others, a rollback is assumed and later
-// training and validation metrics are cleaned up.
-func (db *PgDB) AddTrainingMetrics(ctx context.Context, m *trialv1.TrialMetrics) error {
-	_, err := db.addTrialMetrics(ctx, m, false)
-	return err
-}
-
-// AddValidationMetrics adds a completed validation to the database with the given
-// validation metrics. If these validation metrics occur before any others, a rollback
-// is assumed and later metrics are cleaned up from the database.
-func (db *PgDB) AddValidationMetrics(
-	ctx context.Context, m *trialv1.TrialMetrics,
-) error {
-	_, err := db.addTrialMetrics(ctx, m, true)
-	return err
+	return rollbacks, db.withTransaction(fmt.Sprintf("add trial metrics %s", pType),
+		func(tx *sqlx.Tx) error {
+			rollbacks, err = db._addTrialMetricsTx(ctx, tx, m, pType, mType)
+			return err
+		})
 }
 
 const (
@@ -855,6 +694,7 @@ WHERE id = $1
 // returning nil if none exists.
 func (db *PgDB) ValidationByTotalBatches(trialID, totalBatches int) (*model.TrialMetrics, error) {
 	var validation model.TrialMetrics
+	// TODO: update to go through `metrics`.
 	if err := db.query(`
 SELECT id, trial_id, total_batches, end_time, metrics
 FROM validations
