@@ -668,7 +668,6 @@ func (k *kubernetesResourcePool) getOrCreateGroup(
 	fmt.Println(handler.Address())
 	fmt.Println()
 	if ctx != nil && handler != nil { // ctx is nil only for testing purposes.
-		fmt.Println("DID WE START A NOTIFIER?")
 		actors.NotifyOnStop(ctx, handler, tasklist.GroupActorStopped{Ref: handler})
 	}
 	return g

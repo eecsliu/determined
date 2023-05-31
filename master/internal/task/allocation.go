@@ -427,7 +427,12 @@ func (a *Allocation) Cleanup(ctx *actor.Context) {
 		a.sendTaskLog(ctx, a.enrichLog(model.TaskLog{
 			Log: fmt.Sprintf("%s was terminated: %s", a.req.Name, "allocation did not exit correctly"),
 		}))
-		a.rm.Release(ctx, sproto.ResourcesReleased{AllocationRef: ctx.Self()})
+		fmt.Println()
+		fmt.Println("INSIDE ALLOCATION CLEANUP")
+		fmt.Println("self is:", ctx.Self().Address())
+		fmt.Println("parent is:", ctx.Self().Parent().Address())
+		fmt.Println()
+		a.rm.Release(ctx, sproto.ResourcesReleased{AllocationRef: ctx.Self(), GroupRef: ctx.Self()})
 	}
 }
 
@@ -661,6 +666,8 @@ func (a *Allocation) ResourcesStateChanged(
 
 		a.resources[msg.ResourcesID].Exited = msg.ResourcesStopped
 
+		fmt.Println()
+		fmt.Println("INSIDE SPROTO TERMINATED")
 		a.rm.Release(ctx, sproto.ResourcesReleased{
 			AllocationRef: ctx.Self(),
 			ResourcesID:   &msg.ResourcesID,
@@ -964,6 +971,8 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 	a.exited = true
 	exitReason := fmt.Sprintf("allocation terminated after %s", reason)
 	defer ctx.Tell(ctx.Self().Parent(), exit)
+	fmt.Println()
+	fmt.Println("INSIDE ALLOCATION TERMINATED")
 	defer a.rm.Release(ctx, sproto.ResourcesReleased{AllocationRef: ctx.Self()})
 	defer a.unregisterProxies(ctx)
 	defer ctx.Self().Stop()
