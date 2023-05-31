@@ -184,6 +184,9 @@ func (k *kubernetesResourcePool) summarizePods(
 func (k *kubernetesResourcePool) receiveRequestMsg(ctx *actor.Context) error {
 	switch msg := ctx.Message().(type) {
 	case tasklist.GroupActorStopped:
+		fmt.Println()
+		fmt.Println("TASK ACTOR STOPPED for:", msg.Ref.Address())
+		fmt.Println()
 		delete(k.slotsUsedPerGroup, k.groups[msg.Ref])
 		delete(k.groups, msg.Ref)
 		if jobID, ok := k.groupActorToID[msg.Ref]; ok {
@@ -494,6 +497,10 @@ func (k *kubernetesResourcePool) assignResources(
 		}
 	}
 
+	fmt.Println()
+	fmt.Println("INCREMENTING SLOTS VALUE FOR:", req.Group.Address())
+	fmt.Println("SLOTS INCREASE BY:", req.SlotsNeeded)
+	fmt.Println()
 	k.slotsUsedPerGroup[k.groups[req.Group]] += req.SlotsNeeded
 
 	var resources []*k8sPodResources
