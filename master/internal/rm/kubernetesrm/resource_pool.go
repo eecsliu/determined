@@ -636,6 +636,10 @@ func (k *kubernetesResourcePool) getOrCreateGroup(
 	k.groups[handler] = g
 	k.slotsUsedPerGroup[g] = 0
 
+	fmt.Println()
+	fmt.Println("INSIDE GET OR CREATE GROUP:")
+	fmt.Println(handler.Address())
+	fmt.Println()
 	if ctx != nil && handler != nil { // ctx is nil only for testing purposes.
 		actors.NotifyOnStop(ctx, handler, tasklist.GroupActorStopped{Ref: handler})
 	}
