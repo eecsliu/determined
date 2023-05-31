@@ -238,6 +238,7 @@ func (k *kubernetesResourcePool) receiveRequestMsg(ctx *actor.Context) error {
 func (k *kubernetesResourcePool) addTask(ctx *actor.Context, msg sproto.AllocateRequest) {
 	actors.NotifyOnStop(ctx, msg.AllocationRef, sproto.ResourcesReleased{
 		AllocationRef: msg.AllocationRef,
+		GroupRef:      msg.Group,
 	})
 
 	if len(msg.AllocationID) == 0 {
@@ -613,7 +614,8 @@ func (k *kubernetesResourcePool) resourcesReleased(
 	if req, ok := k.reqList.TaskByHandler(msg.AllocationRef); ok {
 		fmt.Println("are we in here???")
 		fmt.Println("ALLOCATION REF:", msg.AllocationRef.Address())
-		group := k.groups[msg.AllocationRef]
+		fmt.Println("ALLOCATION REF PARENT?", msg.AllocationRef.Parent().Address())
+		group := k.groups[msg.GroupRef]
 		fmt.Println("GROUP:", group)
 
 		if group != nil {

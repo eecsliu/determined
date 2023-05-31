@@ -114,6 +114,7 @@ func (rp *resourcePool) setupProvisioner(ctx *actor.Context) error {
 func (rp *resourcePool) allocateRequest(ctx *actor.Context, msg sproto.AllocateRequest) {
 	rp.notifyOnStop(ctx, msg.AllocationRef, sproto.ResourcesReleased{
 		AllocationRef: msg.AllocationRef,
+		GroupRef:      msg.Group,
 	})
 	log := ctx.Log().
 		WithField("allocation-id", msg.AllocationID).

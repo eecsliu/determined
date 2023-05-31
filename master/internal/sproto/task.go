@@ -72,6 +72,7 @@ type (
 	ResourcesReleased struct {
 		AllocationRef *actor.Ref
 		ResourcesID   *ResourcesID
+		GroupRef      *actor.Ref
 	}
 	// GetAllocationHandler returns a ref to the handler for the specified task.
 	GetAllocationHandler struct{ ID model.AllocationID }
