@@ -607,7 +607,22 @@ func (k *kubernetesResourcePool) resourcesReleased(
 		return
 	}
 
+	fmt.Println()
+	fmt.Println("RELEASING POD RESOURCES:", msg.AllocationRef.Address())
 	ctx.Log().Infof("resources are released for %s", msg.AllocationRef.Address())
+	if req, ok := k.reqList.TaskByHandler(msg.AllocationRef); ok {
+		fmt.Println("are we in here???")
+		fmt.Println("ALLOCATION REF:", msg.AllocationRef.Address())
+		group := k.groups[msg.AllocationRef]
+		fmt.Println("GROUP:", group)
+
+		if group != nil {
+			fmt.Println("decrementing")
+			k.slotsUsedPerGroup[group] -= req.SlotsNeeded
+		}
+	}
+	fmt.Println()
+
 	k.reqList.RemoveTaskByHandler(msg.AllocationRef)
 	delete(k.addrToContainerID, msg.AllocationRef)
 	delete(k.allocRefToRunningPods, msg.AllocationRef)
@@ -618,14 +633,6 @@ func (k *kubernetesResourcePool) resourcesReleased(
 			deleteID = id
 			delete(k.containerIDtoAddr, deleteID)
 			break
-		}
-	}
-
-	if req, ok := k.reqList.TaskByHandler(msg.AllocationRef); ok {
-		group := k.groups[msg.AllocationRef]
-
-		if group != nil {
-			k.slotsUsedPerGroup[group] -= req.SlotsNeeded
 		}
 	}
 }
@@ -648,6 +655,7 @@ func (k *kubernetesResourcePool) getOrCreateGroup(
 	fmt.Println(handler.Address())
 	fmt.Println()
 	if ctx != nil && handler != nil { // ctx is nil only for testing purposes.
+		fmt.Println("DID WE START A NOTIFIER?")
 		actors.NotifyOnStop(ctx, handler, tasklist.GroupActorStopped{Ref: handler})
 	}
 	return g
