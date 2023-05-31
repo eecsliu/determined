@@ -668,6 +668,9 @@ func (a *Allocation) ResourcesStateChanged(
 
 		fmt.Println()
 		fmt.Println("INSIDE SPROTO TERMINATED")
+		fmt.Println("self:", ctx.Self().Address())
+		fmt.Println("parent:", ctx.Self().Parent().Address())
+		fmt.Println()
 		a.rm.Release(ctx, sproto.ResourcesReleased{
 			AllocationRef: ctx.Self(),
 			ResourcesID:   &msg.ResourcesID,
@@ -973,6 +976,9 @@ func (a *Allocation) terminated(ctx *actor.Context, reason string) {
 	defer ctx.Tell(ctx.Self().Parent(), exit)
 	fmt.Println()
 	fmt.Println("INSIDE ALLOCATION TERMINATED")
+	fmt.Println("self:", ctx.Self().Address())
+	fmt.Println("parent:", ctx.Self().Parent().Address())
+	fmt.Println()
 	defer a.rm.Release(ctx, sproto.ResourcesReleased{AllocationRef: ctx.Self()})
 	defer a.unregisterProxies(ctx)
 	defer ctx.Self().Stop()
