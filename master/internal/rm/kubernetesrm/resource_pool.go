@@ -236,6 +236,9 @@ func (k *kubernetesResourcePool) receiveRequestMsg(ctx *actor.Context) error {
 }
 
 func (k *kubernetesResourcePool) addTask(ctx *actor.Context, msg sproto.AllocateRequest) {
+	fmt.Println()
+	fmt.Println("INSIDE ADD TASK")
+	fmt.Println()
 	actors.NotifyOnStop(ctx, msg.AllocationRef, sproto.ResourcesReleased{
 		AllocationRef: msg.AllocationRef,
 		GroupRef:      msg.Group,
@@ -615,6 +618,10 @@ func (k *kubernetesResourcePool) resourcesReleased(
 		fmt.Println("are we in here???")
 		fmt.Println("ALLOCATION REF:", msg.AllocationRef.Address())
 		fmt.Println("ALLOCATION REF PARENT?", msg.AllocationRef.Parent().Address())
+		if msg.GroupRef != nil {
+			fmt.Println("GROUP REF IS NOT NIL")
+			fmt.Println("GROUP REF:", msg.GroupRef.Address())
+		}
 		group := k.groups[msg.GroupRef]
 		fmt.Println("GROUP:", group)
 

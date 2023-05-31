@@ -664,6 +664,7 @@ func (a *Allocation) ResourcesStateChanged(
 		a.rm.Release(ctx, sproto.ResourcesReleased{
 			AllocationRef: ctx.Self(),
 			ResourcesID:   &msg.ResourcesID,
+			GroupRef:      ctx.Self(),
 		})
 
 		if err := a.resources[msg.ResourcesID].Persist(); err != nil {
