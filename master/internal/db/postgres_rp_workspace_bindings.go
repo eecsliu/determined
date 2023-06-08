@@ -79,16 +79,36 @@ func ReadWorkspacesBoundToRP(
 	query := Bun().NewSelect().Model(&rpWorkspaceBindings).Where("pool_name = ?",
 		poolName)
 
+	return runQueryAndReturn(ctx, query, rpWorkspaceBindings, offset, limit)
+}
+
+func ReadRPsBoundToWorkspace(
+	ctx context.Context, workspaceID int, offset, limit int32,
+) ([]*RPWorkspaceBinding, *apiv1.Pagination, error) {
+	var rpworkspaceBindings []*RPWorkspaceBinding
+
+	query := Bun().NewSelect().Model(&rpworkspaceBindings).Where("workspace_id = ?",
+		workspaceID)
+
+	return runQueryAndReturn(ctx, query, rpworkspaceBindings, offset, limit)
+}
+
+func runQueryAndReturn(
+	ctx context.Context,
+	query *bun.SelectQuery,
+	bindings []*RPWorkspaceBinding,
+	offset, limit int32,
+) ([]*RPWorkspaceBinding, *apiv1.Pagination, error) {
 	pagination, err := runPagedBunQuery(ctx, query, int(offset), int(limit))
 	if err != nil {
 		if errors.Cause(err) == sql.ErrNoRows {
-			return rpWorkspaceBindings, pagination, nil
+			return bindings, pagination, nil
 		}
 
 		return nil, nil, err
 	}
 
-	return rpWorkspaceBindings, pagination, nil
+	return bindings, pagination, nil
 }
 
 // TODO find a good house for this function.
