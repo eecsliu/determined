@@ -5,6 +5,8 @@ package db
 
 import (
 	"context"
+	log "github.com/sirupsen/logrus"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,10 +36,83 @@ func TestListWorkspacesBindingRP(t *testing.T) {
 	return
 }
 
+func TestFindUnboundPools(t *testing.T) {
+	ctx := context.Background()
+	db := MustResolveTestPostgres(t)
+	MustMigrateTestPostgres(t, db, MigrationsFromDB)
+
+	user := RequireMockUser(t, db)
+	var poolsList []config.ResourcePoolConfig
+	for i := 0; i < 10; i++ {
+		poolsList = append(poolsList, config.ResourcePoolConfig{PoolName: "TestPool" + strconv.Itoa(i)})
+	}
+	workspaceNames := []string{"test1", "test2"}
+	workspaceIDs, err := MockWorkspaces(workspaceNames, user.ID)
+	require.NoError(t, err)
+
+	defer func() {
+		err = CleanupMockWorkspace(workspaceIDs)
+		if err != nil {
+			log.Error("error when cleaning up mock workspaces")
+		}
+	}()
+
+	for i := 0; i < 9; i++ {
+		err = AddRPWorkspaceBindings(ctx, []int32{workspaceIDs[0]}, poolsList[i].PoolName, poolsList)
+		require.NoError(t, err, "failure to add rp workspace bindings")
+	}
+
+	foundPools, err := FindUnboundResourcePools(ctx, poolsList)
+	require.NoError(t, err, "error finding unbound resource pools")
+	require.Equal(t, 1, len(foundPools))
+	require.Equal(t, "TestPool9", foundPools[0],
+		"expected pool name TestPool9 but got pool name %s", foundPools[0])
+}
+
 func TestListRPsBoundToWorkspace(t *testing.T) {
 	// pretty straightforward
 	// don't list binding that are invalid
 	// return unbound pools too (we pull from config)
+	ctx := context.Background()
+	db := MustResolveTestPostgres(t)
+	MustMigrateTestPostgres(t, db, MigrationsFromDB)
+
+	user := RequireMockUser(t, db)
+	var poolsList []config.ResourcePoolConfig
+	for i := 0; i < 10; i++ {
+		poolsList = append(poolsList, config.ResourcePoolConfig{PoolName: "TestPool" + strconv.Itoa(i)})
+	}
+	workspaceNames := []string{"test1", "test2"}
+	workspaceIDs, err := MockWorkspaces(workspaceNames, user.ID)
+	require.NoError(t, err)
+
+	defer func() {
+		err = CleanupMockWorkspace(workspaceIDs)
+		if err != nil {
+			log.Error("error when cleaning up mock workspaces")
+		}
+	}()
+
+	var expectedPools []string
+	for i := 0; i < 9; i++ {
+		err = AddRPWorkspaceBindings(ctx, []int32{workspaceIDs[0]}, poolsList[i].PoolName, poolsList)
+		require.NoError(t, err, "failure to add rp workspace bindings")
+		expectedPools = append(expectedPools, poolsList[i].PoolName)
+	}
+
+	resourcePools, _, err := ReadRPsBoundToWorkspace(ctx, int(workspaceIDs[0]), 0, 10)
+	require.NoError(t, err, "error reading resource pools available to workspace")
+
+	var actualPools []string
+	for _, pool := range resourcePools {
+		actualPools = append(actualPools, pool.PoolName)
+	}
+	require.Equal(t, expectedPools, actualPools, "expected available pools to be $t, but got %t", expectedPools, actualPools)
+
+	resourcePools, _, err = ReadRPsBoundToWorkspace(ctx, int(workspaceIDs[1]), 0, 10)
+	require.NoError(t, err, "error reading resource pools available to workspace")
+	require.Equal(t, 0, len(resourcePools), "expected 0 results, but received %d", len(resourcePools))
+
 	return
 }
 

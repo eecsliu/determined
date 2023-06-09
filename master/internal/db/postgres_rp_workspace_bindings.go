@@ -71,6 +71,31 @@ func RemoveRPWorkspaceBindings(ctx context.Context,
 	return err
 }
 
+func FindUnboundResourcePools(
+	ctx context.Context, resourcePools []config.ResourcePoolConfig) ([]string, error) {
+	var boundPools []string
+	err := Bun().NewSelect().Distinct().Table("rp_workspace_bindings").
+		Column("pool_name").Scan(ctx, &boundPools)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			return nil, err
+		}
+	}
+
+	var unboundPools []string
+	boundPoolsMap := map[string]bool{}
+	for _, pool := range boundPools {
+		boundPoolsMap[pool] = true
+	}
+	for _, pool := range resourcePools {
+		if ok := boundPoolsMap[pool.PoolName]; !ok {
+			unboundPools = append(unboundPools, pool.PoolName)
+		}
+	}
+
+	return unboundPools, nil
+}
+
 // ReadWorkspacesBoundToRP get the bindings between workspaceIds and the requested resource pool.
 func ReadWorkspacesBoundToRP(
 	ctx context.Context, poolName string, offset, limit int32,
@@ -79,36 +104,36 @@ func ReadWorkspacesBoundToRP(
 	query := Bun().NewSelect().Model(&rpWorkspaceBindings).Where("pool_name = ?",
 		poolName)
 
-	return runQueryAndReturn(ctx, query, rpWorkspaceBindings, offset, limit)
+	return runQueryAndReturn(ctx, query, &rpWorkspaceBindings, offset, limit)
 }
 
 func ReadRPsBoundToWorkspace(
 	ctx context.Context, workspaceID int, offset, limit int32,
 ) ([]*RPWorkspaceBinding, *apiv1.Pagination, error) {
-	var rpworkspaceBindings []*RPWorkspaceBinding
+	var rpWorkspaceBindings []*RPWorkspaceBinding
 
-	query := Bun().NewSelect().Model(&rpworkspaceBindings).Where("workspace_id = ?",
-		workspaceID)
+	query := Bun().NewSelect().Model(&rpWorkspaceBindings).Where("workspace_id = ?",
+		workspaceID).Where("validity = ?", true)
 
-	return runQueryAndReturn(ctx, query, rpworkspaceBindings, offset, limit)
+	return runQueryAndReturn(ctx, query, &rpWorkspaceBindings, offset, limit)
 }
 
 func runQueryAndReturn(
 	ctx context.Context,
 	query *bun.SelectQuery,
-	bindings []*RPWorkspaceBinding,
+	bindings *[]*RPWorkspaceBinding,
 	offset, limit int32,
 ) ([]*RPWorkspaceBinding, *apiv1.Pagination, error) {
 	pagination, err := runPagedBunQuery(ctx, query, int(offset), int(limit))
 	if err != nil {
 		if errors.Cause(err) == sql.ErrNoRows {
-			return bindings, pagination, nil
+			return *bindings, pagination, nil
 		}
 
 		return nil, nil, err
 	}
 
-	return bindings, pagination, nil
+	return *bindings, pagination, nil
 }
 
 // TODO find a good house for this function.
