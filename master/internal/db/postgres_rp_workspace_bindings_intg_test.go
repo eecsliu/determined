@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	log "github.com/sirupsen/logrus"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,25 +53,46 @@ func TestOverwriteBindings(t *testing.T) {
 	require.NoError(t, etc.SetRootPath(RootFromDB))
 	db := MustResolveTestPostgres(t)
 	MustMigrateTestPostgres(t, db, MigrationsFromDB)
+
 	ctx := context.Background()
 	user := RequireMockUser(t, db)
-	var existingPools []config.ResourcePoolConfig
-	pool := config.ResourcePoolConfig{PoolName: "poolName1"}
-	existingPools = append(existingPools, pool)
-	// Test overwrite bindings
+
 	poolName := "poolName1" //nolint:goconst
-	workspaceNames := []string{"test1", "test2", "test3"}
-	workspaceIDs, err := MockWorkspaces(workspaceNames, user.ID)
-	require.NoError(t, err)
+	var existingPools []config.ResourcePoolConfig
+	pool := config.ResourcePoolConfig{PoolName: poolName}
+	existingPools = append(existingPools, pool)
+
+	workspaceIDs, err := MockWorkspaces([]string{"test1", "test2", "test3"}, user.ID)
+	require.NoError(t, err, "failed creating workspaces: %t", err)
+	defer func() {
+		err = CleanupMockWorkspace(workspaceIDs)
+		if err != nil {
+			log.Errorf("error when cleaning up mock workspaces")
+		}
+	}()
+
 	err = AddRPWorkspaceBindings(ctx, workspaceIDs, poolName, existingPools)
-	require.NoError(t, err)
+	require.NoError(t, err, "failed to add bindings: %t", err)
+
+	var values []RPWorkspaceBinding
+	count, err := Bun().NewSelect().Model(&values).ScanAndCount(ctx)
+	require.NoError(t, err, "error when scanning DB: %t", err)
+	require.Equal(t, 3, count, "expected 3 items in DB, found %d\", count")
+	for i := 0; i < 3; i++ {
+		require.Equal(t, workspaceIDs[i], values[i].WorkspaceID,
+			"expected workspaceID to be %d, but it is %d", i+1, values[i].WorkspaceID)
+		require.Equal(t, "poolName1", values[i].PoolName,
+			"expected pool name to be 'test pool too', but got %s", values[i].PoolName)
+	}
+
+	// Test overwrite bindings
 	err = OverwriteRPWorkspaceBindings(ctx, workspaceIDs, poolName, existingPools)
 	require.NoError(t, err)
 	// TODO: call list bindings here to make sure it worked
 	// Test overwrite pool that's not bound to anything currently
-	pool = config.ResourcePoolConfig{PoolName: "poolName2"}
-	existingPools = append(existingPools, pool)
 	poolName = "poolName2"
+	pool = config.ResourcePoolConfig{PoolName: poolName}
+	existingPools = append(existingPools, pool)
 	err = OverwriteRPWorkspaceBindings(ctx, workspaceIDs, poolName, existingPools)
 	require.NoError(t, err)
 	// TODO: call list bindings here to make sure it worked
