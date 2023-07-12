@@ -425,9 +425,11 @@ func (a *apiServer) PatchWorkspace(
 
 	if req.Workspace.DefaultComputePool != "" {
 		updatedWorkspace.DefaultComputePool = req.Workspace.DefaultComputePool
+		insertColumns = append(insertColumns, "default_compute_pool")
 	}
 	if req.Workspace.DefaultAuxPool != "" {
 		updatedWorkspace.DefaultAuxPool = req.Workspace.DefaultAuxPool
+		insertColumns = append(insertColumns, "default_aux_pool")
 	}
 
 	if req.Workspace.CheckpointStorageConfig != nil {
